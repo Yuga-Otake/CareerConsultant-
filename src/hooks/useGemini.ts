@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { useStore } from '../store/useStore'
 
-const MODEL = 'gemini-1.5-flash'
-const API_VERSION = 'v1'
+const MODEL = 'gemini-2.5-flash'
+const API_VERSION = 'v1beta'
 
 export function useGemini() {
   const apiKey = useStore((s) => s.apiKey)
