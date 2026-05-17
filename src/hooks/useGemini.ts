@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { useStore } from '../store/useStore'
 
+const MODEL = 'gemini-1.5-flash'
+const API_VERSION = 'v1'
+
 export function useGemini() {
   const apiKey = useStore((s) => s.apiKey)
   const [loading, setLoading] = useState(false)
@@ -15,7 +18,7 @@ export function useGemini() {
     setError(null)
     try {
       const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+      const model = genAI.getGenerativeModel({ model: MODEL }, { apiVersion: API_VERSION })
       const result = await model.generateContent(prompt)
       return result.response.text()
     } catch (e) {
@@ -38,7 +41,7 @@ export function useGemini() {
     setError(null)
     try {
       const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+      const model = genAI.getGenerativeModel({ model: MODEL }, { apiVersion: API_VERSION })
       const result = await model.generateContentStream(prompt)
       for await (const chunk of result.stream) {
         onChunk(chunk.text())
