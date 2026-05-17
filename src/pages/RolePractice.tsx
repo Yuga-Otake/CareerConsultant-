@@ -44,8 +44,9 @@ export default function RolePractice() {
     try {
       const opening = await generate(openingPrompt)
       setMessages([{ role: 'client', text: opening }])
-    } catch {
-      setMessages([{ role: 'system', text: 'セッションの開始に失敗しました。APIキーを確認してください。' }])
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '不明なエラー'
+      setMessages([{ role: 'system', text: `エラー: ${msg}` }])
     }
   }
 

@@ -15,7 +15,7 @@ export function useGemini() {
     setError(null)
     try {
       const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
       const result = await model.generateContent(prompt)
       return result.response.text()
     } catch (e) {
@@ -38,7 +38,7 @@ export function useGemini() {
     setError(null)
     try {
       const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
       const result = await model.generateContentStream(prompt)
       for await (const chunk of result.stream) {
         onChunk(chunk.text())
