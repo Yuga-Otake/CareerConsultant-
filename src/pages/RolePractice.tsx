@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { roleplayScenarios } from '../data/roleplayScenarios'
 import { useStore } from '../store/useStore'
 import { useGemini } from '../hooks/useGemini'
@@ -17,6 +17,8 @@ export default function RolePractice() {
   const [phase, setPhase] = useState<'select' | 'chat' | 'feedback'>('select')
   const [feedback, setFeedback] = useState('')
   const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [feedbackError, setFeedbackError] = useState(false)
+  const [retryFn, setRetryFn] = useState<(() => void) | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const filtered = roleplayScenarios.filter((s) => s.level === level || s.level === '共通')
@@ -26,7 +28,7 @@ export default function RolePractice() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const startSession = async (scenario: typeof roleplayScenarios[0]) => {
+  const startSession = useCallback(async (scenario: typeof roleplayScenarios[0]) => {
     if (!apiKey) {
       alert('APIキーを設定してください（右上のAPI設定ボタン）')
       return
@@ -34,6 +36,8 @@ export default function RolePractice() {
     setSelectedId(scenario.id)
     setMessages([])
     setFeedback('')
+    setFeedbackError(false)
+    setRetryFn(null)
     setPhase('chat')
 
     const openingPrompt = `${scenario.systemPrompt}
@@ -44,16 +48,17 @@ export default function RolePractice() {
     try {
       const opening = await generate(openingPrompt)
       setMessages([{ role: 'client', text: opening }])
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '不明なエラー'
-      setMessages([{ role: 'system', text: `エラー: ${msg}` }])
+      setRetryFn(null)
+    } catch {
+      setMessages([])
+      setRetryFn(() => () => startSession(scenario))
     }
-  }
+  }, [apiKey, generate])
 
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     if (!input.trim() || !selected || loading) return
     const userText = input.trim()
-    setInput('')
+
     const newMessages: Message[] = [...messages, { role: 'user', text: userText }]
     setMessages(newMessages)
 
@@ -72,15 +77,23 @@ ${history}
 
     try {
       const reply = await generate(prompt)
+      setInput('')
       setMessages((prev) => [...prev, { role: 'client', text: reply }])
+      setRetryFn(null)
     } catch {
-      setMessages((prev) => [...prev, { role: 'system', text: 'エラーが発生しました。' }])
+      // 入力欄にテキストを戻し、ユーザーメッセージは会話に残す
+      setInput(userText)
+      setMessages(newMessages)
+      setRetryFn(() => () => {
+        setInput(userText)
+      })
     }
-  }
+  }, [input, selected, loading, messages, generate])
 
-  const endAndEvaluate = async () => {
+  const endAndEvaluate = useCallback(async () => {
     if (!selected) return
     setFeedbackLoading(true)
+    setFeedbackError(false)
     setPhase('feedback')
 
     const history = messages
@@ -120,12 +133,13 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
     try {
       const text = await generate(prompt)
       setFeedback(text)
+      setFeedbackError(false)
     } catch {
-      setFeedback('フィードバックの生成に失敗しました。')
+      setFeedbackError(true)
     } finally {
       setFeedbackLoading(false)
     }
-  }
+  }, [selected, messages, generate])
 
   return (
     <div className="space-y-5">
@@ -167,7 +181,7 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
               <p className="text-xs text-gray-400 mt-0.5">{selected.clientProfile}</p>
             </div>
             <button
-              onClick={() => { setPhase('select'); setSelectedId(null); setMessages([]) }}
+              onClick={() => { setPhase('select'); setSelectedId(null); setMessages([]); setInput(''); setRetryFn(null) }}
               className="text-sm text-gray-500 hover:text-gray-700"
             >
               ✕ 終了
@@ -179,6 +193,17 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
           </div>
 
           <div className="bg-white rounded-xl border-2 border-gray-200 min-h-64 max-h-96 overflow-y-auto p-4 space-y-3">
+            {messages.length === 0 && !loading && retryFn && (
+              <div className="flex flex-col items-center gap-3 py-8">
+                <p className="text-sm text-red-500">セッションの開始に失敗しました</p>
+                <button
+                  onClick={retryFn}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700"
+                >
+                  🔄 再試行
+                </button>
+              </div>
+            )}
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
                 {m.role === 'system' ? (
@@ -209,6 +234,18 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
 
           {phase === 'chat' && (
             <div className="space-y-2">
+              {error && (
+                <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  <p className="text-xs text-red-600 flex-1">送信失敗（入力欄に内容を保持しています）</p>
+                  <button
+                    onClick={sendMessage}
+                    disabled={loading || !input.trim()}
+                    className="ml-2 px-3 py-1 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 disabled:opacity-50 flex-shrink-0"
+                  >
+                    🔄 再試行
+                  </button>
+                </div>
+              )}
               <div className="flex gap-2">
                 <textarea
                   value={input}
@@ -238,9 +275,6 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
               >
                 面談を終了してフィードバックを受ける
               </button>
-              {error && (
-                <p className="text-xs text-red-600">{error}</p>
-              )}
             </div>
           )}
 
@@ -250,6 +284,16 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                 <div className="flex items-center gap-3 p-6 bg-white rounded-xl border-2 border-purple-100">
                   <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
                   <span className="text-gray-600">AIがフィードバックを生成中...</span>
+                </div>
+              ) : feedbackError ? (
+                <div className="flex flex-col items-center gap-3 p-6 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-sm text-red-600">フィードバックの生成に失敗しました（会話記録は保持されています）</p>
+                  <button
+                    onClick={endAndEvaluate}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700"
+                  >
+                    🔄 再生成
+                  </button>
                 </div>
               ) : feedback ? (
                 <div className="bg-white rounded-xl border-2 border-purple-200 overflow-hidden">
@@ -263,7 +307,7 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                 </div>
               ) : null}
               <button
-                onClick={() => { setPhase('select'); setSelectedId(null); setMessages([]) }}
+                onClick={() => { setPhase('select'); setSelectedId(null); setMessages([]); setInput(''); setRetryFn(null) }}
                 className="w-full py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50"
               >
                 別のシナリオを練習する

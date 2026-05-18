@@ -214,7 +214,16 @@ ${selected.scoringCriteria.map((c, i) => `${i + 1}. ${c.split('（')[0]}：XX点
               </button>
 
               {error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{error}</div>
+                <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  <p className="text-xs text-red-600 flex-1">採点に失敗しました（回答は保持されています）</p>
+                  <button
+                    onClick={handleScore}
+                    disabled={loading || !answer.trim()}
+                    className="ml-2 px-3 py-1 bg-orange-500 text-white text-xs rounded-lg hover:bg-orange-600 disabled:opacity-50 flex-shrink-0"
+                  >
+                    🔄 再採点
+                  </button>
+                </div>
               )}
 
               {scoreResult && (
