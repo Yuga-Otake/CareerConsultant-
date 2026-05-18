@@ -152,20 +152,9 @@ ${selected.scoringCriteria.map((c, i) => `${i + 1}. ${c.split('（')[0]}：XX点
           {essayRecords.length === 0 ? (
             <p className="text-center text-gray-400 py-12">まだ解答履歴がありません</p>
           ) : (
-            essayRecords.map((r, i) => {
-              const q = essayQuestions.find((q) => q.id === r.questionId)
-              return (
-                <div key={i} className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="text-sm font-medium text-gray-800">{q?.type || r.questionId}</div>
-                    <div className={`text-lg font-bold ${r.score >= 70 ? 'text-green-600' : r.score >= 50 ? 'text-orange-500' : 'text-red-500'}`}>
-                      {r.score}点
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-400">{r.date}</p>
-                </div>
-              )
-            })
+            essayRecords.map((r, i) => (
+              <HistoryCard key={i} record={r} />
+            ))
           )}
         </div>
       ) : (
@@ -282,6 +271,62 @@ ${selected.scoringCriteria.map((c, i) => `${i + 1}. ${c.split('（')[0]}：XX点
             </div>
           ) : null}
         </>
+      )}
+    </div>
+  )
+}
+
+interface EssayRecordItem {
+  questionId: string
+  answer: string
+  score: number
+  feedback: string
+  date: string
+}
+
+function HistoryCard({ record }: { record: EssayRecordItem }) {
+  const [open, setOpen] = useState(false)
+  const q = essayQuestions.find((q) => q.id === record.questionId)
+  const scoreColor = record.score >= 70 ? 'text-green-600' : record.score >= 50 ? 'text-orange-500' : 'text-red-500'
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">{q?.type || record.questionId}</span>
+            <span className="text-xs text-gray-400">{record.date}</span>
+          </div>
+          <p className="text-xs text-gray-500 truncate">{record.answer.slice(0, 60)}...</p>
+        </div>
+        <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+          <span className={`text-lg font-bold ${scoreColor}`}>{record.score}点</span>
+          <span className="text-gray-400 text-sm">{open ? '▲' : '▼'}</span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 p-4 space-y-4">
+          {q && (
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-xs font-semibold text-gray-500 mb-1">問題</p>
+              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed line-clamp-6">{q.question}</pre>
+            </div>
+          )}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 mb-1">あなたの回答（{record.answer.length}文字）</p>
+            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap bg-indigo-50 rounded-lg p-3">{record.answer}</p>
+          </div>
+          {record.feedback && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-1">AIフィードバック</p>
+              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed bg-amber-50 rounded-lg p-3">{record.feedback}</pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
