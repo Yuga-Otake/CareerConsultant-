@@ -384,8 +384,8 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  placeholder="カウンセラーとして話しかけてください（Enterで送信、Shift+Enterで改行）"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                  placeholder="カウンセラーとして話しかけてください（Shift+Enterで送信、Enterで改行）"
                   rows={2}
                   className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-400 resize-none"
                 />
