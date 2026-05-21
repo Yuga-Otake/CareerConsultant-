@@ -134,7 +134,7 @@ ${history}
       setRetryFn(null)
     } catch {
       setInput(userText)
-      setMessages(newMessages)
+      setMessages(messages)
       setRetryFn(() => () => { setInput(userText) })
     }
   }, [input, selected, sessionId, loading, messages, generate, persistSession])
