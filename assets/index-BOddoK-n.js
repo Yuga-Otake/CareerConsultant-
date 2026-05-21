@@ -189,7 +189,7 @@ ${y.scoringCriteria.map((e,t)=>`${t+1}. ${e.split(`（`)[0]}：XX点\nコメン�
 ${n}
 
 クライアントとして、カウンセラーの最後の発言「${e}」に自然に返答してください。
-2〜4文で返答してください。`;try{let e=await a(r);_(``);let n=[...t,{role:`client`,text:e}];h(n),k(f,D,n),E(null)}catch{_(e),h(t),E(()=>()=>{_(e)})}},[g,D,f,o,m,a,k]),A=(0,x.useCallback)(async()=>{if(!D||!f)return;C(!0),T(!1),y(`feedback`);let e=m.filter(e=>e.role!==`system`).map(e=>`${e.role===`user`?`カウンセラー`:`クライアント`}：${e.text}`).join(`
+2〜4文で返答してください。`;try{let e=await a(r);_(``);let n=[...t,{role:`client`,text:e}];h(n),k(f,D,n),E(null)}catch{_(e),h(m),E(()=>()=>{_(e)})}},[g,D,f,o,m,a,k]),A=(0,x.useCallback)(async()=>{if(!D||!f)return;C(!0),T(!1),y(`feedback`);let e=m.filter(e=>e.role!==`system`).map(e=>`${e.role===`user`?`カウンセラー`:`クライアント`}：${e.text}`).join(`
 `),t=`あなたはキャリアコンサルティング技能検定の評価者です。
 以下のロールプレイ面談記録を評価してください。
 
