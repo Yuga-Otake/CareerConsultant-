@@ -5,6 +5,7 @@ import WebInfo from './pages/WebInfo'
 import Quiz from './pages/Quiz'
 import EssayPractice from './pages/EssayPractice'
 import RolePractice from './pages/RolePractice'
+import EmpathyPractice from './pages/EmpathyPractice'
 import './index.css'
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="quiz" element={<Quiz />} />
           <Route path="essay" element={<EssayPractice />} />
           <Route path="roleplay" element={<RolePractice />} />
+          <Route path="empathy" element={<EmpathyPractice />} />
         </Route>
       </Routes>
     </BrowserRouter>

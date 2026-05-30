@@ -8,6 +8,7 @@ const navItems = [
   { to: '/quiz', label: '知識確認', icon: '📝' },
   { to: '/essay', label: '論述練習', icon: '✍️' },
   { to: '/roleplay', label: 'ロープレ', icon: '🎭' },
+  { to: '/empathy', label: '共感練習', icon: '💬' },
 ]
 
 export default function Layout() {

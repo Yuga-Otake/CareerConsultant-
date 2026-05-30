@@ -34,6 +34,14 @@ const features = [
     color: 'bg-purple-50 border-purple-200 hover:bg-purple-100',
     iconBg: 'bg-purple-100',
   },
+  {
+    to: '/empathy',
+    icon: '💬',
+    title: '共感表現練習',
+    description: 'クライアントの発言に共感表現を書き、AIが5観点で即採点',
+    color: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
+    iconBg: 'bg-teal-100',
+  },
 ]
 
 export default function Home() {
