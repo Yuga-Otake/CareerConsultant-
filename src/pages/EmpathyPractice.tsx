@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useGemini } from '../hooks/useGemini'
-import { useStore } from '../store/useStore'
+import { useStore, type EmpathyRecord } from '../store/useStore'
 
 interface EmpathyScenario {
   id: string
@@ -241,10 +241,15 @@ ${response}
 （より良くするための具体的なアドバイスを2点）`
 }
 
+function extractScore(text: string): number {
+  const m = text.match(/合計[：:]\s*(\d+)/)
+  return m ? parseInt(m[1]) : 0
+}
+
 export default function EmpathyPractice() {
-  const { apiKey } = useStore()
+  const { apiKey, empathyRecords, addEmpathyRecord, deleteEmpathyRecord } = useStore()
   const { generate, loading, error } = useGemini()
-  const [tab, setTab] = useState<'drill' | 'phrases'>('drill')
+  const [tab, setTab] = useState<'drill' | 'phrases' | 'history'>('drill')
   const [level, setLevel] = useState<'初級' | '中級' | '上級'>('初級')
   const [scenarioIndex, setScenarioIndex] = useState(0)
   const [response, setResponse] = useState('')
@@ -253,6 +258,7 @@ export default function EmpathyPractice() {
   const [sessionCorrect, setSessionCorrect] = useState(0)
   const [sessionTotal, setSessionTotal] = useState(0)
   const [copiedPhrase, setCopiedPhrase] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const levelScenarios = scenarios.filter((s) => s.level === level)
   const current = levelScenarios[scenarioIndex % levelScenarios.length]
@@ -262,11 +268,20 @@ export default function EmpathyPractice() {
     try {
       const text = await generate(buildEvalPrompt(current, response))
       setFeedback(text)
+      const score = extractScore(text)
       setSessionTotal((t) => t + 1)
-      const scoreMatch = text.match(/合計[：:]\s*(\d+)/)
-      if (scoreMatch && parseInt(scoreMatch[1]) >= 60) {
-        setSessionCorrect((c) => c + 1)
-      }
+      if (score >= 60) setSessionCorrect((c) => c + 1)
+      addEmpathyRecord({
+        id: Date.now().toString(),
+        scenarioId: current.id,
+        level: current.level,
+        situation: current.situation,
+        statement: current.statement,
+        response,
+        feedback: text,
+        score,
+        date: new Date().toLocaleDateString('ja-JP'),
+      })
     } catch {
       // error shown by hook
     }
@@ -297,6 +312,31 @@ export default function EmpathyPractice() {
     }
   }
 
+  const shareRecord = async (record: EmpathyRecord) => {
+    const text = [
+      '【キャリコン学習 共感表現練習記録】',
+      `レベル：${record.level}　${record.situation}`,
+      `日時：${record.date}`,
+      '',
+      '--- クライアントの発言 ---',
+      `「${record.statement}」`,
+      '',
+      '--- あなたの共感表現 ---',
+      record.response,
+      '',
+      '--- AIフィードバック ---',
+      record.feedback,
+    ].join('\n')
+
+    if (navigator.share) {
+      await navigator.share({ title: '共感表現練習記録', text })
+    } else {
+      await navigator.clipboard.writeText(text)
+      setCopiedId(record.id)
+      setTimeout(() => setCopiedId(null), 2000)
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -320,6 +360,12 @@ export default function EmpathyPractice() {
           className={`flex-1 py-2 ${tab === 'phrases' ? 'bg-teal-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
         >
           フレーズ集
+        </button>
+        <button
+          onClick={() => setTab('history')}
+          className={`flex-1 py-2 ${tab === 'history' ? 'bg-teal-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+        >
+          履歴 ({empathyRecords.length})
         </button>
       </div>
 
@@ -391,8 +437,9 @@ export default function EmpathyPractice() {
               {feedback && (
                 <div className="space-y-3">
                   <div className="bg-white rounded-xl border-2 border-teal-200 overflow-hidden">
-                    <div className="bg-teal-600 text-white px-4 py-3">
+                    <div className="bg-teal-600 text-white px-4 py-3 flex justify-between items-center">
                       <h2 className="font-semibold">AIフィードバック</h2>
+                      <span className="text-lg font-bold">{extractScore(feedback)}点</span>
                     </div>
                     <div className="p-4">
                       <FeedbackDisplay text={feedback} />
@@ -460,6 +507,93 @@ export default function EmpathyPractice() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'history' && (
+        <div className="space-y-3">
+          {empathyRecords.length === 0 ? (
+            <p className="text-center text-gray-400 py-12">まだ練習履歴がありません</p>
+          ) : (
+            empathyRecords.map((record) => (
+              <EmpathyHistoryCard
+                key={record.id}
+                record={record}
+                onDelete={() => deleteEmpathyRecord(record.id)}
+                onShare={() => shareRecord(record)}
+                copied={copiedId === record.id}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface EmpathyHistoryCardProps {
+  record: EmpathyRecord
+  onDelete: () => void
+  onShare: () => void
+  copied: boolean
+}
+
+function EmpathyHistoryCard({ record, onDelete, onShare, copied }: EmpathyHistoryCardProps) {
+  const [open, setOpen] = useState(false)
+  const scoreColor = record.score >= 80 ? 'text-green-600' : record.score >= 60 ? 'text-orange-500' : 'text-red-500'
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">{record.level}</span>
+            <span className="text-xs text-gray-400">{record.date}</span>
+          </div>
+          <p className="text-xs text-gray-500 truncate">{record.situation}</p>
+        </div>
+        <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+          <span className={`text-lg font-bold ${scoreColor}`}>{record.score}点</span>
+          <span className="text-gray-400 text-sm">{open ? '▲' : '▼'}</span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 p-4 space-y-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 mb-1">クライアントの発言</p>
+            <p className="text-sm text-gray-700 leading-relaxed">「{record.statement}」</p>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-500 mb-1">あなたの共感表現</p>
+            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap bg-teal-50 rounded-lg p-3">{record.response}</p>
+          </div>
+
+          {record.feedback && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-1">AIフィードバック</p>
+              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed bg-amber-50 rounded-lg p-3">{record.feedback}</pre>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={onShare}
+              className="flex-1 py-2 text-sm border border-teal-300 text-teal-700 rounded-lg hover:bg-teal-50"
+            >
+              {copied ? '✓ コピーしました' : '共有'}
+            </button>
+            <button
+              onClick={onDelete}
+              className="px-4 py-2 text-sm border border-red-200 text-red-500 rounded-lg hover:bg-red-50"
+            >
+              削除
+            </button>
+          </div>
         </div>
       )}
     </div>

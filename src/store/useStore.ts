@@ -15,6 +15,18 @@ interface EssayRecord {
   date: string
 }
 
+export interface EmpathyRecord {
+  id: string
+  scenarioId: string
+  level: '初級' | '中級' | '上級'
+  situation: string
+  statement: string
+  response: string
+  feedback: string
+  score: number
+  date: string
+}
+
 export interface RoleplayMessage {
   role: 'user' | 'client' | 'system'
   text: string
@@ -36,11 +48,14 @@ interface AppState {
   level: '2級' | '1級'
   quizProgress: QuizProgress
   essayRecords: EssayRecord[]
+  empathyRecords: EmpathyRecord[]
   roleplaySessions: RoleplaySession[]
   setApiKey: (key: string) => void
   setLevel: (level: '2級' | '1級') => void
   recordQuizAnswer: (id: string, correct: boolean) => void
   addEssayRecord: (record: EssayRecord) => void
+  addEmpathyRecord: (record: EmpathyRecord) => void
+  deleteEmpathyRecord: (id: string) => void
   saveRoleplaySession: (session: RoleplaySession) => void
   deleteRoleplaySession: (id: string) => void
   resetProgress: () => void
@@ -53,6 +68,7 @@ export const useStore = create<AppState>()(
       level: '2級',
       quizProgress: { correct: 0, total: 0, wrongIds: [] },
       essayRecords: [],
+      empathyRecords: [],
       roleplaySessions: [],
       setApiKey: (key) => set({ apiKey: key }),
       setLevel: (level) => set({ level }),
@@ -70,6 +86,12 @@ export const useStore = create<AppState>()(
         })),
       addEssayRecord: (record) =>
         set((state) => ({ essayRecords: [record, ...state.essayRecords.slice(0, 19)] })),
+      addEmpathyRecord: (record) =>
+        set((state) => ({ empathyRecords: [record, ...state.empathyRecords.slice(0, 49)] })),
+      deleteEmpathyRecord: (id) =>
+        set((state) => ({
+          empathyRecords: state.empathyRecords.filter((r) => r.id !== id),
+        })),
       saveRoleplaySession: (session) =>
         set((state) => {
           const exists = state.roleplaySessions.some((s) => s.id === session.id)
