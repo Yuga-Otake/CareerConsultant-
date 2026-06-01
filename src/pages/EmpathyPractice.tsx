@@ -449,12 +449,25 @@ function extractScore(text: string): number {
   return m ? parseInt(m[1]) : 0
 }
 
+function getUnlockedIds(levelScenarios: EmpathyScenario[], records: EmpathyRecord[]): Set<string> {
+  const unlocked = new Set<string>()
+  if (levelScenarios.length === 0) return unlocked
+  unlocked.add(levelScenarios[0].id)
+  for (let i = 1; i < levelScenarios.length; i++) {
+    const prevId = levelScenarios[i - 1].id
+    const hasPassed = records.some((r) => r.scenarioId === prevId && r.score >= 90)
+    if (hasPassed) unlocked.add(levelScenarios[i].id)
+    else break
+  }
+  return unlocked
+}
+
 export default function EmpathyPractice() {
   const { apiKey, empathyRecords, addEmpathyRecord, deleteEmpathyRecord } = useStore()
   const { generate, loading, error } = useGemini()
   const [tab, setTab] = useState<'drill' | 'phrases' | 'history'>('drill')
   const [level, setLevel] = useState<'初級' | '中級' | '上級'>('初級')
-  const [scenarioIndex, setScenarioIndex] = useState(0)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [response, setResponse] = useState('')
   const [feedback, setFeedback] = useState('')
   const [showModel, setShowModel] = useState(false)
@@ -464,7 +477,22 @@ export default function EmpathyPractice() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const levelScenarios = scenarios.filter((s) => s.level === level)
-  const current = levelScenarios[scenarioIndex % levelScenarios.length]
+  const current = scenarios.find((s) => s.id === selectedId) ?? null
+
+  const bestScores = empathyRecords.reduce((acc, r) => {
+    if (!acc[r.scenarioId] || acc[r.scenarioId] < r.score) acc[r.scenarioId] = r.score
+    return acc
+  }, {} as Record<string, number>)
+
+  const unlockedIds = getUnlockedIds(levelScenarios, empathyRecords)
+
+  const currentScore = feedback ? extractScore(feedback) : 0
+  const practiceLevelScenarios = current ? scenarios.filter((s) => s.level === current.level) : []
+  const currentIdx = practiceLevelScenarios.findIndex((s) => s.id === selectedId)
+  const nextScenario = currentIdx >= 0 && currentIdx < practiceLevelScenarios.length - 1
+    ? practiceLevelScenarios[currentIdx + 1]
+    : null
+  const justUnlocked = !!feedback && currentScore >= 90 && nextScenario !== null
 
   const handleEvaluate = async () => {
     if (!response.trim() || !current) return
@@ -490,16 +518,15 @@ export default function EmpathyPractice() {
     }
   }
 
-  const handleNext = () => {
-    setScenarioIndex((i) => i + 1)
+  const selectScenario = (id: string) => {
+    setSelectedId(id)
     setResponse('')
     setFeedback('')
     setShowModel(false)
   }
 
-  const handleLevelChange = (l: '初級' | '中級' | '上級') => {
-    setLevel(l)
-    setScenarioIndex(0)
+  const backToList = () => {
+    setSelectedId(null)
     setResponse('')
     setFeedback('')
     setShowModel(false)
@@ -573,24 +600,80 @@ export default function EmpathyPractice() {
       </div>
 
       {tab === 'drill' && (
-        <div className="space-y-4">
-          <div className="flex gap-2">
-            {(['初級', '中級', '上級'] as const).map((l) => (
-              <button
-                key={l}
-                onClick={() => handleLevelChange(l)}
-                className={`px-4 py-1.5 rounded-full text-sm border-2 transition-colors ${level === l ? 'bg-teal-600 text-white border-teal-600' : 'border-gray-300 text-gray-600 hover:border-teal-400'}`}
-              >
-                {l}
-              </button>
-            ))}
-            <span className="ml-auto text-xs text-gray-400 self-center">
-              {(scenarioIndex % levelScenarios.length) + 1} / {levelScenarios.length}問
-            </span>
-          </div>
+        <>
+          {/* ── シナリオ一覧 ── */}
+          {!selectedId && (
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                {(['初級', '中級', '上級'] as const).map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => setLevel(l)}
+                    className={`px-4 py-1.5 rounded-full text-sm border-2 transition-colors ${level === l ? 'bg-teal-600 text-white border-teal-600' : 'border-gray-300 text-gray-600 hover:border-teal-400'}`}
+                  >
+                    {l}
+                  </button>
+                ))}
+                <span className="ml-auto text-xs text-gray-400 self-center">
+                  {levelScenarios.filter((s) => bestScores[s.id] !== undefined).length} / {levelScenarios.length}問挑戦済
+                </span>
+              </div>
 
-          {current && (
-            <>
+              <div className="space-y-2">
+                {levelScenarios.map((s, idx) => {
+                  const unlocked = unlockedIds.has(s.id)
+                  const best = bestScores[s.id]
+                  const cleared = best !== undefined && best >= 90
+                  const scoreColor = best !== undefined
+                    ? (best >= 90 ? 'text-green-600' : best >= 70 ? 'text-orange-500' : 'text-red-500')
+                    : 'text-gray-400'
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => unlocked && selectScenario(s.id)}
+                      disabled={!unlocked}
+                      className={`w-full text-left rounded-xl border-2 p-4 transition-colors ${
+                        unlocked
+                          ? 'bg-white border-gray-200 hover:border-teal-400'
+                          : 'bg-gray-50 border-gray-100 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-xs font-medium ${unlocked ? 'text-gray-400' : 'text-gray-300'}`}>#{idx + 1}</span>
+                            {cleared && <span className="text-xs text-green-600 font-semibold">✓ クリア</span>}
+                          </div>
+                          <p className={`text-sm font-medium truncate ${unlocked ? 'text-gray-700' : 'text-gray-400'}`}>{s.situation}</p>
+                          {unlocked
+                            ? <p className="text-xs text-teal-600 mt-0.5">{s.emotion}</p>
+                            : <p className="text-xs text-gray-400 mt-1">🔒 前の問題で90点以上を取ると解放</p>
+                          }
+                        </div>
+                        <div className="flex-shrink-0">
+                          {unlocked ? (
+                            <span className={`text-base font-bold ${scoreColor}`}>
+                              {best !== undefined ? `${best}点` : '未挑戦'}
+                            </span>
+                          ) : (
+                            <span className="text-xl text-gray-300">🔒</span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── 練習画面 ── */}
+          {selectedId && current && (
+            <div className="space-y-4">
+              <button onClick={backToList} className="text-sm text-teal-600 hover:underline">
+                ← 問題一覧に戻る
+              </button>
+
               <div className="bg-white rounded-xl border-2 border-gray-200 p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">{current.level}</span>
@@ -604,9 +687,7 @@ export default function EmpathyPractice() {
               </div>
 
               <div>
-                <label className="text-sm font-semibold text-gray-700 mb-2 block">
-                  あなたの共感表現
-                </label>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">あなたの共感表現</label>
                 <textarea
                   value={response}
                   onChange={(e) => setResponse(e.target.value)}
@@ -639,10 +720,16 @@ export default function EmpathyPractice() {
 
               {feedback && (
                 <div className="space-y-3">
+                  {justUnlocked && (
+                    <div className="bg-green-50 border border-green-300 rounded-xl px-4 py-3 text-sm text-green-700 font-medium">
+                      🔓 次の問題が解放されました！
+                    </div>
+                  )}
+
                   <div className="bg-white rounded-xl border-2 border-teal-200 overflow-hidden">
                     <div className="bg-teal-600 text-white px-4 py-3 flex justify-between items-center">
                       <h2 className="font-semibold">AIフィードバック</h2>
-                      <span className="text-lg font-bold">{extractScore(feedback)}点</span>
+                      <span className="text-lg font-bold">{currentScore}点</span>
                     </div>
                     <div className="p-4">
                       <FeedbackDisplay text={feedback} />
@@ -668,10 +755,10 @@ export default function EmpathyPractice() {
                   )}
 
                   <button
-                    onClick={handleNext}
+                    onClick={backToList}
                     className="w-full py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-medium"
                   >
-                    次の場面へ →
+                    ← 問題一覧に戻る
                   </button>
                 </div>
               )}
@@ -681,9 +768,9 @@ export default function EmpathyPractice() {
                   AI評価機能にはGemini APIキーが必要です（右上のAPI設定ボタン）
                 </div>
               )}
-            </>
+            </div>
           )}
-        </div>
+        </>
       )}
 
       {tab === 'phrases' && (
