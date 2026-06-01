@@ -75,7 +75,13 @@ export default function RolePractice() {
     setPhase('chat')
     setTab('scenarios')
 
-    const openingPrompt = `${scenario.systemPrompt}
+    const is1Q = scenario.level === '1級'
+    const openingPrompt = is1Q
+      ? `${scenario.systemPrompt}
+
+今からスーパービジョンが始まります。後輩キャリアコンサルタントとして、担当ケースについての相談を始めてください。
+自然な最初の発言を1〜3文で話してください。`
+      : `${scenario.systemPrompt}
 
 今から面談が始まります。クライアントとして最初のひと言を言ってください。
 相談に来た場面の自然な最初の発言を、1〜3文で話してください。`
@@ -112,12 +118,24 @@ export default function RolePractice() {
     const newMessages: Message[] = [...messages, { role: 'user', text: userText }]
     setMessages(newMessages)
 
+    const is1Q = selected.level === '1級'
+    const myLabel = is1Q ? 'スーパーバイザー' : 'カウンセラー'
+    const theirLabel = is1Q ? 'キャリアコンサルタント' : 'クライアント'
+
     const history = newMessages
       .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role === 'user' ? 'カウンセラー' : 'クライアント'}：${m.text}`)
+      .map((m) => `${m.role === 'user' ? myLabel : theirLabel}：${m.text}`)
       .join('\n')
 
-    const prompt = `${selected.systemPrompt}
+    const prompt = is1Q
+      ? `${selected.systemPrompt}
+
+【これまでの会話】
+${history}
+
+後輩キャリアコンサルタントとして、スーパーバイザーの最後の発言「${userText}」に自然に返答してください。
+2〜3文で返答してください。`
+      : `${selected.systemPrompt}
 
 【これまでの会話】
 ${history}
@@ -145,12 +163,45 @@ ${history}
     setFeedbackError(false)
     setPhase('feedback')
 
+    const is1Q = selected.level === '1級'
+    const myLabel = is1Q ? 'スーパーバイザー' : 'カウンセラー'
+    const theirLabel = is1Q ? 'キャリアコンサルタント' : 'クライアント'
+
     const history = messages
       .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role === 'user' ? 'カウンセラー' : 'クライアント'}：${m.text}`)
+      .map((m) => `${m.role === 'user' ? myLabel : theirLabel}：${m.text}`)
       .join('\n')
 
-    const prompt = `あなたはキャリアコンサルティング技能検定の評価者です。
+    const prompt = is1Q
+      ? `あなたはキャリアコンサルティング技能検定1級の評価者です。
+以下のスーパービジョン記録を評価してください。
+
+【シナリオ】${selected.title}
+【スーパーバイジー（後輩CC）】${selected.clientProfile}
+
+【評価観点】
+${selected.evaluationPoints.join('\n')}
+
+【スーパービジョン記録】
+${history}
+
+以下の形式で評価してください：
+
+## 総合評価
+（3〜5行でスーパーバイザーとしての全体的な評価）
+
+## 良かった点
+（具体的な発言を引用しながら2〜3点）
+
+## 改善すべき点
+（具体的な発言・場面を指摘しながら2〜3点）
+
+## 各観点の評価
+${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメント）`).join('\n')}
+
+## 次のステップ
+（スーパーバイザーとして成長するためのポイント）`
+      : `あなたはキャリアコンサルティング技能検定の評価者です。
 以下のロールプレイ面談記録を評価してください。
 
 【シナリオ】${selected.title}
@@ -192,16 +243,22 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
   }, [selected, sessionId, messages, generate, persistSession])
 
   const shareSession = useCallback(async (session: RoleplaySession) => {
+    const sessionScenario = roleplayScenarios.find((s) => s.id === session.scenarioId)
+    const is1QSession = sessionScenario?.level === '1級'
+    const myLabel = is1QSession ? 'スーパーバイザー' : 'カウンセラー'
+    const theirLabel = is1QSession ? 'キャリアコンサルタント' : 'クライアント'
+    const profileLabel = is1QSession ? 'スーパーバイジー' : 'クライアント'
+    const recordLabel = is1QSession ? '--- スーパービジョン記録 ---' : '--- 面談記録 ---'
     const lines = [
       '【キャリコン学習 ロープレ記録】',
       `シナリオ：${session.scenarioTitle}`,
-      `クライアント：${session.clientProfile}`,
+      `${profileLabel}：${session.clientProfile}`,
       `日時：${session.date}`,
       '',
-      '--- 面談記録 ---',
+      recordLabel,
       ...session.messages
         .filter((m) => m.role !== 'system')
-        .map((m) => `${m.role === 'user' ? 'カウンセラー' : 'クライアント'}：${m.text}`),
+        .map((m) => `${m.role === 'user' ? myLabel : theirLabel}：${m.text}`),
     ]
     if (session.feedback) {
       lines.push('', '--- AIフィードバック ---', session.feedback)
@@ -280,7 +337,7 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                     <span className="font-semibold text-gray-800">{s.title}</span>
                     <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full ml-auto">{s.level}</span>
                   </div>
-                  <p className="text-sm text-gray-500">{s.clientProfile}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{s.level === '1級' ? 'スーパーバイジー：' : 'クライアント：'}{s.clientProfile}</p>
                   <p className="text-sm text-gray-600 mt-1">{s.situation}</p>
                 </button>
               ))}
@@ -346,7 +403,11 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                   <span className="text-xs text-gray-400 italic">{m.text}</span>
                 ) : (
                   <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-gray-100 text-gray-800 rounded-bl-sm'}`}>
-                    {m.role === 'client' && <div className="text-xs text-gray-500 mb-1 font-medium">クライアント</div>}
+                    {m.role === 'client' && (
+                      <div className="text-xs text-gray-500 mb-1 font-medium">
+                        {selected.level === '1級' ? 'キャリアコンサルタント' : 'クライアント'}
+                      </div>
+                    )}
                     <p className="leading-relaxed">{m.text}</p>
                   </div>
                 )}
@@ -385,7 +446,7 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  placeholder="カウンセラーとして話しかけてください（Shift+Enterで送信、Enterで改行）"
+                  placeholder={selected.level === '1級' ? 'スーパーバイザーとして話しかけてください（Shift+Enterで送信、Enterで改行）' : 'カウンセラーとして話しかけてください（Shift+Enterで送信、Enterで改行）'}
                   rows={2}
                   className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-400 resize-none"
                 />
@@ -468,6 +529,9 @@ interface HistoryCardProps {
 
 function HistoryCard({ session, expanded, copied, onToggle, onResume, onShare, onDelete }: HistoryCardProps) {
   const userTurns = session.messages.filter((m) => m.role === 'user').length
+  const is1Q = roleplayScenarios.find((s) => s.id === session.scenarioId)?.level === '1級'
+  const myLabel = is1Q ? 'スーパーバイザー' : 'カウンセラー'
+  const theirLabel = is1Q ? 'キャリアコンサルタント' : 'クライアント'
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <button onClick={onToggle} className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50">
@@ -491,7 +555,7 @@ function HistoryCard({ session, expanded, copied, onToggle, onResume, onShare, o
               {session.messages.filter((m) => m.role !== 'system').map((m, i) => (
                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs ${m.role === 'user' ? 'bg-indigo-100 text-indigo-900' : 'bg-gray-100 text-gray-800'}`}>
-                    <span className="font-medium opacity-60">{m.role === 'user' ? 'カウンセラー' : 'クライアント'}　</span>
+                    <span className="font-medium opacity-60">{m.role === 'user' ? myLabel : theirLabel}　</span>
                     {m.text}
                   </div>
                 </div>
