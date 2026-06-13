@@ -7,12 +7,19 @@ interface QuizProgress {
   wrongIds: string[]
 }
 
-interface EssayRecord {
+export interface EssayFollowUpMessage {
+  role: 'user' | 'ai'
+  text: string
+}
+
+export interface EssayRecord {
+  id?: string
   questionId: string
   answer: string
   score: number
   feedback: string
   date: string
+  followUp?: EssayFollowUpMessage[]
 }
 
 export interface EmpathyRecord {
@@ -54,6 +61,8 @@ interface AppState {
   setLevel: (level: '2級' | '1級') => void
   recordQuizAnswer: (id: string, correct: boolean) => void
   addEssayRecord: (record: EssayRecord) => void
+  updateEssayRecord: (id: string, followUp: EssayFollowUpMessage[]) => void
+  deleteEssayRecord: (id: string) => void
   addEmpathyRecord: (record: EmpathyRecord) => void
   deleteEmpathyRecord: (id: string) => void
   saveRoleplaySession: (session: RoleplaySession) => void
@@ -85,7 +94,17 @@ export const useStore = create<AppState>()(
           },
         })),
       addEssayRecord: (record) =>
-        set((state) => ({ essayRecords: [record, ...state.essayRecords.slice(0, 19)] })),
+        set((state) => ({ essayRecords: [record, ...state.essayRecords.slice(0, 29)] })),
+      updateEssayRecord: (id, followUp) =>
+        set((state) => ({
+          essayRecords: state.essayRecords.map((r) =>
+            r.id === id ? { ...r, followUp } : r
+          ),
+        })),
+      deleteEssayRecord: (id) =>
+        set((state) => ({
+          essayRecords: state.essayRecords.filter((r) => r.id !== id),
+        })),
       addEmpathyRecord: (record) =>
         set((state) => ({ empathyRecords: [record, ...state.empathyRecords.slice(0, 49)] })),
       deleteEmpathyRecord: (id) =>

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { essayQuestions, transcriptQuestions } from '../data/essayQuestions'
 import type { TranscriptQuestion } from '../data/essayQuestions'
 import { useStore } from '../store/useStore'
+import type { EssayRecord, EssayFollowUpMessage } from '../store/useStore'
 import { useGemini } from '../hooks/useGemini'
 
 interface ScoreResult {
@@ -17,69 +18,47 @@ function parseScore(text: string): ScoreResult {
   let totalMatch = 0
 
   const criteria = [
-    '問題の把握',
-    '目標の明確化',
-    '具体的支援計画',
-    '倫理',
-    '逐語記録',
-    '面接技法',
-    '適切な応答',
-    '問題分析',
-    '指導内容',
-    '指導関係',
-    'アセスメント',
-    'セッション計画',
-    '具体的手法',
-    '全体',
-    '論述',
-    '表現',
+    '問題の把握', '目標の明確化', '具体的支援計画', '倫理',
+    '逐語記録', '面接技法', '適切な応答', '問題分析',
+    '指導内容', '指導関係', 'アセスメント', 'セッション計画',
+    '具体的手法', '全体', '論述', '表現',
   ]
 
   let currentScore = 0
   const numMatch = text.match(/合計[：:]?\s*(\d+)/)?.[1]
   if (numMatch) totalMatch = parseInt(numMatch)
-
-  const scorePattern = /(\d+)\s*点/g
-  const allScores = [...text.matchAll(scorePattern)].map((m) => parseInt(m[1]))
+  const allScores = [...text.matchAll(/(\d+)\s*点/g)].map((m) => parseInt(m[1]))
 
   criteria.forEach((label, idx) => {
-    const regex = new RegExp(`${label}[^\\n]*?(\\d+)\\s*点`, 'i')
-    const match = text.match(regex)
+    const match = text.match(new RegExp(`${label}[^\\n]*?(\\d+)\\s*点`, 'i'))
     if (match) {
       const score = parseInt(match[1])
       currentScore += score
       const lineIdx = lines.findIndex((l) => l.includes(label))
       const comment = lineIdx >= 0 ? lines.slice(lineIdx, lineIdx + 3).join(' ').replace(/\d+点/, '').trim() : ''
-      if (scores.length < 4) {
-        scores.push({ label, score, comment })
-      }
+      if (scores.length < 4) scores.push({ label, score, comment })
     }
     idx
   })
 
   if (scores.length === 0) {
-    allScores.slice(0, 4).forEach((s, i) => {
-      scores.push({ label: `観点${i + 1}`, score: s, comment: '' })
-    })
+    allScores.slice(0, 4).forEach((s, i) => scores.push({ label: `観点${i + 1}`, score: s, comment: '' }))
   }
 
   const total = totalMatch || currentScore || scores.reduce((a, b) => a + b.score, 0)
-
   const overallMatch = text.match(/総評[：:]\s*([^\n]+)/)
   overall = overallMatch ? overallMatch[1] : text.split('\n').slice(-3).join(' ')
-
   return { scores, total, overall }
 }
 
-interface SubScore {
-  raw: string
-  score: number
-}
-
+interface SubScore { raw: string; score: number }
 type SubScores = (SubScore | null)[]
 
+// ────────────────────────────────────────────────────────────
+// Main page component
+// ────────────────────────────────────────────────────────────
 export default function EssayPractice() {
-  const { level, addEssayRecord, essayRecords } = useStore()
+  const { level, addEssayRecord, updateEssayRecord, deleteEssayRecord, essayRecords } = useStore()
   const { generate, loading, error } = useGemini()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [answer, setAnswer] = useState('')
@@ -88,18 +67,33 @@ export default function EssayPractice() {
   const [showModel, setShowModel] = useState(false)
   const [tab, setTab] = useState<'practice' | 'history'>('practice')
 
-  // Transcript question state
+  // Transcript-specific
   const [subAnswers, setSubAnswers] = useState<string[]>(['', '', ''])
   const [subScores, setSubScores] = useState<SubScores>([null, null, null])
-  const [scoringStep, setScoringStep] = useState<number>(-1) // index being scored, -1 = idle
+  const [scoringStep, setScoringStep] = useState<number>(-1)
   const [showTranscript, setShowTranscript] = useState(true)
+
+  // Record tracking (for follow-up)
+  const [currentRecordId, setCurrentRecordId] = useState<string | null>(null)
+  const [followUpMessages, setFollowUpMessages] = useState<EssayFollowUpMessage[]>([])
+  const [followUpInput, setFollowUpInput] = useState('')
+  const [followUpLoading, setFollowUpLoading] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const filteredEssay = essayQuestions.filter((q) => q.level === level)
   const filteredTranscript = transcriptQuestions.filter((q) => q.level === level)
-
   const selectedEssay = essayQuestions.find((q) => q.id === selectedId)
   const selectedTranscript = transcriptQuestions.find((q) => q.id === selectedId)
   const isTranscript = !!selectedTranscript
+
+  const totalSubScore = subScores.reduce((a, b) => a + (b?.score || 0), 0)
+  const allAnswered = selectedTranscript
+    ? selectedTranscript.subQuestions.every((_, i) => subAnswers[i].trim())
+    : false
+  const allScored = selectedTranscript
+    ? selectedTranscript.subQuestions.every((_, i) => subScores[i] !== null)
+    : false
+  const hasScoredSome = subScores.some((s) => s !== null)
 
   const resetState = () => {
     setAnswer('')
@@ -110,12 +104,35 @@ export default function EssayPractice() {
     setSubScores([null, null, null])
     setScoringStep(-1)
     setShowTranscript(true)
+    setCurrentRecordId(null)
+    setFollowUpMessages([])
+    setFollowUpInput('')
   }
 
+  // Auto-save when all transcript sub-questions are scored
+  useEffect(() => {
+    if (!selectedTranscript || !allScored || currentRecordId) return
+    const id = `essay-${Date.now()}`
+    setCurrentRecordId(id)
+    const combined = subScores
+      .map((s, i) => (s ? `【問${i + 1}のフィードバック】\n${s.raw}` : ''))
+      .filter(Boolean)
+      .join('\n\n---\n\n')
+    addEssayRecord({
+      id,
+      questionId: selectedTranscript.id,
+      answer: JSON.stringify(subAnswers),
+      score: totalSubScore,
+      feedback: combined,
+      date: new Date().toLocaleDateString('ja-JP'),
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allScored])
+
+  // ── Regular essay scoring ────────────────────────────────
   const handleScore = async () => {
     if (!selectedEssay || !answer.trim()) return
-    const prompt = `
-あなたはキャリアコンサルティング技能検定の採点官です。以下の論述問題の回答を100点満点で採点してください。
+    const prompt = `あなたはキャリアコンサルティング技能検定の採点官です。以下の論述問題の回答を100点満点で採点してください。
 
 【問題】
 ${selectedEssay.question}
@@ -137,33 +154,34 @@ ${selectedEssay.scoringCriteria.map((c, i) => `${i + 1}. ${c.split('（')[0]}：
 （全体的な評価と改善のポイントを3〜5行で）
 
 ## 改善のための具体的アドバイス：
-（箇条書きで2〜3点）
-`
+（箇条書きで2〜3点）`
     try {
       const text = await generate(prompt)
       setRawFeedback(text)
       const result = parseScore(text)
       setScoreResult(result)
-      addEssayRecord({
-        questionId: selectedEssay.id,
-        answer,
-        score: result.total,
-        feedback: text,
-        date: new Date().toLocaleDateString('ja-JP'),
-      })
-    } catch {
-      // error shown by hook
-    }
+      if (!currentRecordId) {
+        const id = `essay-${Date.now()}`
+        setCurrentRecordId(id)
+        addEssayRecord({
+          id,
+          questionId: selectedEssay.id,
+          answer,
+          score: result.total,
+          feedback: text,
+          date: new Date().toLocaleDateString('ja-JP'),
+        })
+      }
+    } catch { /* error shown by hook */ }
   }
 
+  // ── Transcript scoring ───────────────────────────────────
   const scoreOneTranscript = async (idx: number, question: typeof selectedTranscript): Promise<SubScore | null> => {
     if (!question) return null
     const sq = question.subQuestions[idx]
     const ans = subAnswers[idx]
     if (!ans.trim()) return null
-
     setScoringStep(idx)
-
     const prompt = `あなたはキャリアコンサルティング技能検定2級の採点官です。
 逐語記録を読んだ上で、以下の設問に対する回答を採点してください。
 
@@ -193,18 +211,13 @@ ${sq.modelAnswer}
 （不足している観点や改善できる点を2〜3点）
 
 ## 総評：
-（全体的なコメントを2〜3行で）
-`
+（全体的なコメントを2〜3行で）`
     try {
       const text = await generate(prompt)
       const scoreMatch = text.match(/得点[：:]?\s*(\d+)\s*点/)
       const score = scoreMatch ? parseInt(scoreMatch[1]) : Math.round(sq.maxScore * 0.6)
       const result: SubScore = { raw: text, score }
-      setSubScores((prev) => {
-        const next = [...prev]
-        next[idx] = result
-        return next
-      })
+      setSubScores((prev) => { const next = [...prev]; next[idx] = result; return next })
       setScoringStep(-1)
       return result
     } catch {
@@ -225,29 +238,106 @@ ${sq.modelAnswer}
         results[i] = await scoreOneTranscript(i, selectedTranscript)
       }
     }
-    const total = results.reduce((a, b) => a + (b?.score || 0), 0)
-    const combined = results
-      .map((s, i) => (s ? `【問${i + 1}のフィードバック】\n${s.raw}` : ''))
-      .filter(Boolean)
-      .join('\n\n---\n\n')
-    if (combined) {
-      addEssayRecord({
-        questionId: selectedTranscript.id,
-        answer: JSON.stringify(subAnswers),
-        score: total,
-        feedback: combined,
-        date: new Date().toLocaleDateString('ja-JP'),
-      })
+    // useEffect will auto-save when allScored becomes true
+  }
+
+  // ── Follow-up chat ───────────────────────────────────────
+  const buildFollowUpContext = () => {
+    if (selectedTranscript) {
+      return `【問題】${selectedTranscript.title}
+【相談者プロフィール】${selectedTranscript.clientProfile}
+【逐語記録】${selectedTranscript.transcript}
+
+【受験者の解答と採点結果】
+${subScores.map((s, i) => s ? `問${i + 1}（${selectedTranscript.subQuestions[i].maxScore}点満点）：${s.score}点\n解答：${subAnswers[i]}\nフィードバック：${s.raw}` : '').filter(Boolean).join('\n\n')}`
+    }
+    if (selectedEssay) {
+      return `【問題】${selectedEssay.question}
+【受験者の解答】${answer}
+【AIフィードバック】${rawFeedback}`
+    }
+    return ''
+  }
+
+  const handleFollowUp = async () => {
+    if (!followUpInput.trim() || followUpLoading || !currentRecordId) return
+    const userMsg: EssayFollowUpMessage = { role: 'user', text: followUpInput.trim() }
+    const newMessages = [...followUpMessages, userMsg]
+    setFollowUpMessages(newMessages)
+    setFollowUpInput('')
+    setFollowUpLoading(true)
+
+    const history = newMessages.slice(0, -1)
+      .map((m) => `${m.role === 'user' ? 'Q' : 'A'}: ${m.text}`)
+      .join('\n')
+
+    const prompt = `あなたはキャリアコンサルティング技能検定の専門家です。
+受験者が採点結果について質問しています。丁寧に答えてください。
+
+【採点コンテキスト】
+${buildFollowUpContext()}
+${history ? `\n【これまでのやりとり】\n${history}` : ''}
+
+【受験者の質問】
+${userMsg.text}
+
+日本語で分かりやすく答えてください。具体例や根拠も含めてください。`
+
+    try {
+      const text = await generate(prompt)
+      const aiMsg: EssayFollowUpMessage = { role: 'ai', text }
+      const updated = [...newMessages, aiMsg]
+      setFollowUpMessages(updated)
+      updateEssayRecord(currentRecordId, updated)
+    } catch { /* error handled by hook */ }
+    setFollowUpLoading(false)
+  }
+
+  // ── Share ────────────────────────────────────────────────
+  const shareRecord = async (record: EssayRecord) => {
+    const tq = transcriptQuestions.find((q) => q.id === record.questionId)
+    const q = essayQuestions.find((q) => q.id === record.questionId)
+    let parsedAnswers: string[] | null = null
+    try { if (record.answer.startsWith('[')) parsedAnswers = JSON.parse(record.answer) } catch { /* ignore */ }
+
+    const lines = [
+      '【キャリコン学習 論述記録】',
+      `問題：${tq?.title || q?.type || record.questionId}`,
+      `日時：${record.date}`,
+      `得点：${record.score}点`,
+      '',
+      '--- 解答 ---',
+      ...(parsedAnswers
+        ? parsedAnswers.map((a, i) => `問${i + 1}：\n${a}`)
+        : [`回答：\n${record.answer}`]),
+      '',
+      '--- AIフィードバック ---',
+      record.feedback,
+      ...(record.followUp?.length ? [
+        '',
+        '--- フォローアップQ&A ---',
+        ...record.followUp.map((m) => `${m.role === 'user' ? 'Q' : 'A'}：${m.text}`),
+      ] : []),
+    ]
+    const text = lines.join('\n')
+    if (navigator.share) {
+      await navigator.share({ title: '論述記録', text })
+    } else {
+      await navigator.clipboard.writeText(text)
+      setCopiedId(record.id || 'current')
+      setTimeout(() => setCopiedId(null), 2000)
     }
   }
 
-  const totalSubScore = subScores.reduce((a, b) => a + (b?.score || 0), 0)
-  const allAnswered = selectedTranscript
-    ? selectedTranscript.subQuestions.every((_, i) => subAnswers[i].trim())
-    : false
-  const allScored = selectedTranscript
-    ? selectedTranscript.subQuestions.every((_, i) => subScores[i] !== null)
-    : false
+  // Share current session (not yet in history)
+  const shareCurrentSession = async () => {
+    if (!currentRecordId) return
+    const record = essayRecords.find((r) => r.id === currentRecordId)
+    if (record) shareRecord(record)
+  }
+
+  // ── Render ───────────────────────────────────────────────
+  const scoringDone = !!(scoreResult || allScored)
 
   return (
     <div className="space-y-5">
@@ -275,7 +365,21 @@ ${sq.modelAnswer}
             <p className="text-center text-gray-400 py-12">まだ解答履歴がありません</p>
           ) : (
             essayRecords.map((r, i) => (
-              <HistoryCard key={i} record={r} />
+              <HistoryCard
+                key={i}
+                record={r}
+                copiedId={copiedId}
+                onShare={shareRecord}
+                onDelete={(id) => id && deleteEssayRecord(id)}
+                onFollowUpSend={(id, msgs, input) => {
+                  // inline follow-up from history
+                  setCurrentRecordId(id)
+                  setFollowUpMessages(msgs)
+                  setFollowUpInput(input)
+                }}
+                onUpdate={updateEssayRecord}
+                generate={generate}
+              />
             ))
           )}
         </div>
@@ -328,26 +432,53 @@ ${sq.modelAnswer}
                 </div>
               )}
             </div>
+
           ) : isTranscript && selectedTranscript ? (
-            <TranscriptPractice
-              question={selectedTranscript}
-              subAnswers={subAnswers}
-              setSubAnswers={setSubAnswers}
-              subScores={subScores}
-              scoringStep={scoringStep}
-              loading={loading}
-              error={error}
-              showTranscript={showTranscript}
-              setShowTranscript={setShowTranscript}
-              showModel={showModel}
-              setShowModel={setShowModel}
-              allAnswered={allAnswered}
-              allScored={allScored}
-              totalSubScore={totalSubScore}
-              onBack={() => { setSelectedId(null); resetState() }}
-              onScoreOne={handleScoreTranscript}
-              onScoreAll={handleScoreAll}
-            />
+            <div className="space-y-4">
+              <TranscriptPractice
+                question={selectedTranscript}
+                subAnswers={subAnswers}
+                setSubAnswers={setSubAnswers}
+                subScores={subScores}
+                scoringStep={scoringStep}
+                loading={loading}
+                error={error}
+                showTranscript={showTranscript}
+                setShowTranscript={setShowTranscript}
+                showModel={showModel}
+                setShowModel={setShowModel}
+                allAnswered={allAnswered}
+                allScored={allScored}
+                hasScoredSome={hasScoredSome}
+                totalSubScore={totalSubScore}
+                onBack={() => { setSelectedId(null); resetState() }}
+                onScoreOne={handleScoreTranscript}
+                onScoreAll={handleScoreAll}
+              />
+
+              {/* Share after scoring */}
+              {allScored && currentRecordId && (
+                <button
+                  onClick={shareCurrentSession}
+                  className="w-full py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  {copiedId === currentRecordId ? '✅ コピーしました' : '共有する'}
+                </button>
+              )}
+
+              {/* Follow-up chat */}
+              {hasScoredSome && (
+                <FollowUpChat
+                  messages={followUpMessages}
+                  input={followUpInput}
+                  setInput={setFollowUpInput}
+                  loading={followUpLoading}
+                  onSend={handleFollowUp}
+                  disabled={!currentRecordId}
+                />
+              )}
+            </div>
+
           ) : selectedEssay ? (
             <div className="space-y-4">
               <button
@@ -415,21 +546,27 @@ ${sq.modelAnswer}
                             </span>
                           </div>
                           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-orange-400 rounded-full"
-                              style={{ width: `${Math.min(100, (s.score / 25) * 100)}%` }}
-                            />
+                            <div className="h-full bg-orange-400 rounded-full" style={{ width: `${Math.min(100, (s.score / 25) * 100)}%` }} />
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-gray-700">
-                    <p className="font-semibold text-amber-800 mb-2">AIフィードバック</p>
-                    <pre className="whitespace-pre-wrap text-sm leading-relaxed font-sans">{rawFeedback}</pre>
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <p className="font-semibold text-amber-800 mb-2 text-sm">AIフィードバック</p>
+                    <pre className="whitespace-pre-wrap text-sm leading-relaxed font-sans text-gray-700">{rawFeedback}</pre>
                   </div>
                 </div>
+              )}
+
+              {scoringDone && currentRecordId && (
+                <button
+                  onClick={shareCurrentSession}
+                  className="w-full py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  {copiedId === currentRecordId ? '✅ コピーしました' : '共有する'}
+                </button>
               )}
 
               <button
@@ -449,6 +586,18 @@ ${sq.modelAnswer}
                   </ul>
                 </div>
               )}
+
+              {/* Follow-up chat for regular essay */}
+              {scoringDone && (
+                <FollowUpChat
+                  messages={followUpMessages}
+                  input={followUpInput}
+                  setInput={setFollowUpInput}
+                  loading={followUpLoading}
+                  onSend={handleFollowUp}
+                  disabled={!currentRecordId}
+                />
+              )}
             </div>
           ) : null}
         </>
@@ -457,6 +606,83 @@ ${sq.modelAnswer}
   )
 }
 
+// ────────────────────────────────────────────────────────────
+// Follow-up chat component
+// ────────────────────────────────────────────────────────────
+interface FollowUpChatProps {
+  messages: EssayFollowUpMessage[]
+  input: string
+  setInput: (v: string) => void
+  loading: boolean
+  onSend: () => void
+  disabled?: boolean
+}
+
+function FollowUpChat({ messages, input, setInput, loading, onSend, disabled }: FollowUpChatProps) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  return (
+    <div className="bg-white rounded-xl border-2 border-indigo-200 overflow-hidden">
+      <div className="bg-indigo-50 px-4 py-3 border-b border-indigo-100">
+        <p className="text-sm font-semibold text-indigo-800">フィードバックについて質問する</p>
+        <p className="text-xs text-indigo-500 mt-0.5">採点結果への疑問・改善方法などを聞けます</p>
+      </div>
+
+      {messages.length > 0 && (
+        <div className="p-4 space-y-3 max-h-80 overflow-y-auto">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                  m.role === 'user'
+                    ? 'bg-indigo-600 text-white rounded-br-sm'
+                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                }`}
+              >
+                <pre className="whitespace-pre-wrap font-sans leading-relaxed">{m.text}</pre>
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-500">
+                考え中...
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
+
+      <div className="p-3 flex gap-2 border-t border-gray-100">
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); onSend() } }}
+          placeholder="質問を入力…（Shift+Enterで送信）"
+          rows={2}
+          disabled={disabled || loading}
+          className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none disabled:opacity-50"
+        />
+        <button
+          onClick={onSend}
+          disabled={disabled || loading || !input.trim()}
+          className="px-3 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 text-sm font-medium self-end flex-shrink-0"
+        >
+          送信
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────
+// Transcript practice view
+// ────────────────────────────────────────────────────────────
 interface TranscriptPracticeProps {
   question: TranscriptQuestion
   subAnswers: string[]
@@ -471,6 +697,7 @@ interface TranscriptPracticeProps {
   setShowModel: (v: boolean) => void
   allAnswered: boolean
   allScored: boolean
+  hasScoredSome: boolean
   totalSubScore: number
   onBack: () => void
   onScoreOne: (idx: number) => void
@@ -478,44 +705,25 @@ interface TranscriptPracticeProps {
 }
 
 function TranscriptPractice({
-  question,
-  subAnswers,
-  setSubAnswers,
-  subScores,
-  scoringStep,
-  loading,
-  error,
-  showTranscript,
-  setShowTranscript,
-  showModel,
-  setShowModel,
-  allAnswered,
-  allScored,
-  totalSubScore,
-  onBack,
-  onScoreOne,
-  onScoreAll,
+  question, subAnswers, setSubAnswers, subScores, scoringStep,
+  loading, error, showTranscript, setShowTranscript,
+  showModel, setShowModel, allAnswered, allScored, totalSubScore,
+  onBack, onScoreOne, onScoreAll,
 }: TranscriptPracticeProps) {
   const updateAnswer = (idx: number, val: string) => {
-    const next = [...subAnswers]
-    next[idx] = val
-    setSubAnswers(next)
+    const next = [...subAnswers]; next[idx] = val; setSubAnswers(next)
   }
-
   const scoreColor = (score: number, max: number) => {
     const pct = score / max
-    if (pct >= 0.8) return 'text-green-600'
-    if (pct >= 0.6) return 'text-orange-500'
-    return 'text-red-500'
+    return pct >= 0.8 ? 'text-green-600' : pct >= 0.6 ? 'text-orange-500' : 'text-red-500'
   }
 
   return (
-    <div className="space-y-4">
+    <>
       <button onClick={onBack} className="text-sm text-indigo-600 hover:underline">
         ← 問題一覧に戻る
       </button>
 
-      {/* Header */}
       <div className="bg-teal-50 border-2 border-teal-200 rounded-xl p-4">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full">逐語論述</span>
@@ -525,13 +733,11 @@ function TranscriptPractice({
         <p className="text-xs text-gray-500 mt-1">{question.clientProfile.split('\n')[0]}</p>
       </div>
 
-      {/* Client profile */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <p className="text-xs font-semibold text-gray-500 mb-2">相談者プロフィール</p>
         <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{question.clientProfile}</pre>
       </div>
 
-      {/* Transcript toggle */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <button
           onClick={() => setShowTranscript(!showTranscript)}
@@ -547,14 +753,13 @@ function TranscriptPractice({
         )}
       </div>
 
-      {/* Sub-questions */}
       {question.subQuestions.map((sq, idx) => (
         <div key={idx} className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden">
           <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-gray-800">{sq.question}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-semibold text-gray-800 flex-1">{sq.question}</p>
               {subScores[idx] && (
-                <span className={`text-base font-bold ml-2 flex-shrink-0 ${scoreColor(subScores[idx]!.score, sq.maxScore)}`}>
+                <span className={`text-base font-bold flex-shrink-0 ${scoreColor(subScores[idx]!.score, sq.maxScore)}`}>
                   {subScores[idx]!.score}/{sq.maxScore}点
                 </span>
               )}
@@ -580,7 +785,6 @@ function TranscriptPractice({
                 </button>
               )}
             </div>
-
             {subScores[idx] && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                 <pre className="whitespace-pre-wrap text-xs leading-relaxed font-sans text-gray-700">{subScores[idx]!.raw}</pre>
@@ -590,7 +794,6 @@ function TranscriptPractice({
         </div>
       ))}
 
-      {/* Score all button */}
       {!allScored && (
         <button
           onClick={onScoreAll}
@@ -607,7 +810,6 @@ function TranscriptPractice({
         </div>
       )}
 
-      {/* Total score */}
       {allScored && (
         <div className="bg-teal-500 text-white rounded-xl px-4 py-4 flex justify-between items-center">
           <span className="font-semibold">合計得点</span>
@@ -615,7 +817,6 @@ function TranscriptPractice({
         </div>
       )}
 
-      {/* Model answers */}
       <button
         onClick={() => setShowModel(!showModel)}
         className="w-full py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50"
@@ -633,29 +834,82 @@ function TranscriptPractice({
           ))}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
-interface EssayRecordItem {
-  questionId: string
-  answer: string
-  score: number
-  feedback: string
-  date: string
+// ────────────────────────────────────────────────────────────
+// History card
+// ────────────────────────────────────────────────────────────
+interface HistoryCardProps {
+  record: EssayRecord
+  copiedId: string | null
+  onShare: (r: EssayRecord) => void
+  onDelete: (id: string | undefined) => void
+  onFollowUpSend: (id: string, msgs: EssayFollowUpMessage[], input: string) => void
+  onUpdate: (id: string, followUp: EssayFollowUpMessage[]) => void
+  generate: (prompt: string) => Promise<string>
 }
 
-function HistoryCard({ record }: { record: EssayRecordItem }) {
+function HistoryCard({ record, copiedId, onShare, onDelete, onUpdate, generate }: HistoryCardProps) {
   const [open, setOpen] = useState(false)
+  const [followUpInput, setFollowUpInput] = useState('')
+  const [followUpLoading, setFollowUpLoading] = useState(false)
+  const [localFollowUp, setLocalFollowUp] = useState<EssayFollowUpMessage[]>(record.followUp || [])
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
   const q = essayQuestions.find((q) => q.id === record.questionId)
   const tq = transcriptQuestions.find((q) => q.id === record.questionId)
   const scoreColor = record.score >= 70 ? 'text-green-600' : record.score >= 50 ? 'text-orange-500' : 'text-red-500'
 
-  const isJsonAnswer = record.answer.startsWith('[') || record.answer.startsWith('{')
   let parsedAnswers: string[] | null = null
-  try {
-    if (isJsonAnswer) parsedAnswers = JSON.parse(record.answer)
-  } catch { /* ignore */ }
+  try { if (record.answer.startsWith('[')) parsedAnswers = JSON.parse(record.answer) } catch { /* ignore */ }
+
+  useEffect(() => {
+    setLocalFollowUp(record.followUp || [])
+  }, [record.followUp])
+
+  useEffect(() => {
+    if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [localFollowUp, open])
+
+  const sendFollowUp = async () => {
+    if (!followUpInput.trim() || followUpLoading || !record.id) return
+    const userMsg: EssayFollowUpMessage = { role: 'user', text: followUpInput.trim() }
+    const newMessages = [...localFollowUp, userMsg]
+    setLocalFollowUp(newMessages)
+    setFollowUpInput('')
+    setFollowUpLoading(true)
+
+    const history = newMessages.slice(0, -1).map((m) => `${m.role === 'user' ? 'Q' : 'A'}: ${m.text}`).join('\n')
+    const answerBlock = parsedAnswers
+      ? parsedAnswers.map((a, i) => `問${i + 1}：${a}`).join('\n')
+      : `回答：${record.answer}`
+
+    const prompt = `あなたはキャリアコンサルティング技能検定の専門家です。
+受験者が採点結果について質問しています。丁寧に答えてください。
+
+【採点コンテキスト】
+問題：${tq?.title || q?.type || record.questionId}
+${answerBlock}
+AIフィードバック：${record.feedback}
+${history ? `\n【これまでのやりとり】\n${history}` : ''}
+
+【受験者の質問】
+${userMsg.text}
+
+日本語で分かりやすく答えてください。具体例や根拠も含めてください。`
+
+    try {
+      const text = await generate(prompt)
+      const aiMsg: EssayFollowUpMessage = { role: 'ai', text }
+      const updated = [...newMessages, aiMsg]
+      setLocalFollowUp(updated)
+      onUpdate(record.id!, updated)
+    } catch { /* ignore */ }
+    setFollowUpLoading(false)
+  }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -669,6 +923,11 @@ function HistoryCard({ record }: { record: EssayRecordItem }) {
               {tq ? '逐語論述' : q?.type || record.questionId}
             </span>
             <span className="text-xs text-gray-400">{record.date}</span>
+            {localFollowUp.length > 0 && (
+              <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full">
+                Q&A {Math.floor(localFollowUp.length / 2)}件
+              </span>
+            )}
           </div>
           <p className="text-xs text-gray-500 truncate">
             {tq ? tq.title : (parsedAnswers ? parsedAnswers[0].slice(0, 60) : record.answer.slice(0, 60))}...
@@ -682,18 +941,9 @@ function HistoryCard({ record }: { record: EssayRecordItem }) {
 
       {open && (
         <div className="border-t border-gray-100 p-4 space-y-4">
-          {tq && (
-            <div className="bg-gray-50 rounded-lg p-3">
-              <p className="text-xs font-semibold text-gray-500 mb-1">問題</p>
-              <p className="text-xs text-gray-700">{tq.title}</p>
-            </div>
-          )}
-          {q && (
-            <div className="bg-gray-50 rounded-lg p-3">
-              <p className="text-xs font-semibold text-gray-500 mb-1">問題</p>
-              <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed line-clamp-6">{q.question}</pre>
-            </div>
-          )}
+          {tq && <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs font-semibold text-gray-500 mb-1">問題</p><p className="text-xs text-gray-700">{tq.title}</p></div>}
+          {q && <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs font-semibold text-gray-500 mb-1">問題</p><pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed line-clamp-6">{q.question}</pre></div>}
+
           {parsedAnswers ? (
             <div className="space-y-2">
               {parsedAnswers.map((ans, i) => (
@@ -709,12 +959,82 @@ function HistoryCard({ record }: { record: EssayRecordItem }) {
               <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap bg-indigo-50 rounded-lg p-3">{record.answer}</p>
             </div>
           )}
+
           {record.feedback && (
             <div>
               <p className="text-xs font-semibold text-gray-500 mb-1">AIフィードバック</p>
               <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed bg-amber-50 rounded-lg p-3">{record.feedback}</pre>
             </div>
           )}
+
+          {/* Follow-up Q&A */}
+          {localFollowUp.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-2">フォローアップQ&A</p>
+              <div className="space-y-2">
+                {localFollowUp.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-gray-100 text-gray-800 rounded-bl-sm'}`}>
+                      <pre className="whitespace-pre-wrap font-sans leading-relaxed">{m.text}</pre>
+                    </div>
+                  </div>
+                ))}
+                {followUpLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-xs text-gray-500">考え中...</div>
+                  </div>
+                )}
+                <div ref={bottomRef} />
+              </div>
+            </div>
+          )}
+
+          {/* Follow-up input */}
+          {record.id && (
+            <div className="flex gap-2">
+              <textarea
+                value={followUpInput}
+                onChange={(e) => setFollowUpInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); sendFollowUp() } }}
+                placeholder="採点への質問…（Shift+Enter送信）"
+                rows={2}
+                disabled={followUpLoading}
+                className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-indigo-400 resize-none disabled:opacity-50"
+              />
+              <button
+                onClick={sendFollowUp}
+                disabled={followUpLoading || !followUpInput.trim()}
+                className="px-3 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 text-xs font-medium self-end flex-shrink-0"
+              >
+                送信
+              </button>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => onShare(record)}
+              className="flex-1 py-2 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+            >
+              {copiedId === record.id ? '✅ コピー済み' : '共有'}
+            </button>
+            {!confirmDelete ? (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="flex-1 py-2 text-xs border border-red-200 rounded-lg text-red-500 hover:bg-red-50"
+              >
+                削除
+              </button>
+            ) : (
+              <button
+                onClick={() => { onDelete(record.id); setConfirmDelete(false) }}
+                className="flex-1 py-2 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600"
+              >
+                本当に削除
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
