@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { roleplayScenarios } from '../data/roleplayScenarios'
-import { useStore, type RoleplaySession } from '../store/useStore'
+import { useStore, type RoleplaySession, type EssayFollowUpMessage } from '../store/useStore'
 import { useGemini } from '../hooks/useGemini'
 
 type Message = { role: 'user' | 'client' | 'system'; text: string }
@@ -20,6 +20,9 @@ export default function RolePractice() {
   const [retryFn, setRetryFn] = useState<(() => void) | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
+  const [followUpMessages, setFollowUpMessages] = useState<EssayFollowUpMessage[]>([])
+  const [followUpInput, setFollowUpInput] = useState('')
+  const [followUpLoading, setFollowUpLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const filtered = roleplayScenarios.filter((s) => s.level === level || s.level === '共通')
@@ -58,6 +61,8 @@ export default function RolePractice() {
     setFeedback('')
     setFeedbackError(false)
     setRetryFn(null)
+    setFollowUpMessages([])
+    setFollowUpInput('')
   }, [])
 
   const startSession = useCallback(async (scenario: typeof roleplayScenarios[0]) => {
@@ -105,6 +110,8 @@ export default function RolePractice() {
     setSessionId(session.id)
     setMessages(session.messages)
     setFeedback(session.feedback)
+    setFollowUpMessages(session.followUp || [])
+    setFollowUpInput('')
     setFeedbackError(false)
     setRetryFn(null)
     setPhase(session.completed ? 'feedback' : 'chat')
@@ -242,6 +249,41 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
     }
   }, [selected, sessionId, messages, generate, persistSession])
 
+  const handleFollowUp = useCallback(async () => {
+    if (!followUpInput.trim() || followUpLoading || !selected || !sessionId) return
+    const userMsg: EssayFollowUpMessage = { role: 'user', text: followUpInput.trim() }
+    const newMessages = [...followUpMessages, userMsg]
+    setFollowUpMessages(newMessages)
+    setFollowUpInput('')
+    setFollowUpLoading(true)
+
+    const is1Q = selected.level === '1級'
+    const history = newMessages.slice(0, -1)
+      .map((m) => `${m.role === 'user' ? 'Q' : 'A'}: ${m.text}`)
+      .join('\n')
+
+    const prompt = `あなたはキャリアコンサルティング技能検定の専門家です。
+${is1Q ? 'スーパービジョン' : 'ロールプレイ面談'}のフィードバックについて質問に答えてください。
+
+【シナリオ】${selected.title}
+【AIフィードバック】${feedback}
+${history ? `\n【これまでのやりとり】\n${history}` : ''}
+
+【質問】${userMsg.text}
+
+日本語で丁寧に答えてください。具体的な改善例や技法の説明も含めてください。`
+
+    try {
+      const text = await generate(prompt)
+      const aiMsg: EssayFollowUpMessage = { role: 'ai', text }
+      const updated = [...newMessages, aiMsg]
+      setFollowUpMessages(updated)
+      const session = roleplaySessions.find((s) => s.id === sessionId)
+      if (session) saveRoleplaySession({ ...session, followUp: updated })
+    } catch { /* error handled by hook */ }
+    setFollowUpLoading(false)
+  }, [followUpInput, followUpLoading, followUpMessages, selected, sessionId, feedback, generate, roleplaySessions, saveRoleplaySession])
+
   const shareSession = useCallback(async (session: RoleplaySession) => {
     const sessionScenario = roleplayScenarios.find((s) => s.id === session.scenarioId)
     const is1QSession = sessionScenario?.level === '1級'
@@ -262,6 +304,10 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
     ]
     if (session.feedback) {
       lines.push('', '--- AIフィードバック ---', session.feedback)
+    }
+    if (session.followUp?.length) {
+      lines.push('', '--- フィードバックへの質問 ---')
+      session.followUp.forEach((m) => lines.push(`${m.role === 'user' ? 'Q' : 'A'}：${m.text}`))
     }
     const text = lines.join('\n')
 
@@ -364,6 +410,7 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                     onResume={() => resumeSession(s)}
                     onShare={() => shareSession(s)}
                     onDelete={() => deleteRoleplaySession(s.id)}
+                    onUpdateSession={saveRoleplaySession}
                   />
                 ))
               )}
@@ -483,28 +530,37 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
                   </button>
                 </div>
               ) : feedback ? (
-                <div className="bg-white rounded-xl border-2 border-purple-200 overflow-hidden">
-                  <div className="bg-purple-600 text-white px-4 py-3 flex items-center justify-between">
-                    <div>
-                      <h2 className="font-semibold">面談フィードバック</h2>
-                      <p className="text-purple-200 text-xs">Gemini AIによる評価</p>
+                <>
+                  <div className="bg-white rounded-xl border-2 border-purple-200 overflow-hidden">
+                    <div className="bg-purple-600 text-white px-4 py-3 flex items-center justify-between">
+                      <div>
+                        <h2 className="font-semibold">面談フィードバック</h2>
+                        <p className="text-purple-200 text-xs">Gemini AIによる評価</p>
+                      </div>
+                      {sessionId && (
+                        <button
+                          onClick={() => {
+                            const s = roleplaySessions.find((s) => s.id === sessionId)
+                            if (s) shareSession(s)
+                          }}
+                          className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg"
+                        >
+                          {copiedId === sessionId ? '✓ コピー済み' : '共有'}
+                        </button>
+                      )}
                     </div>
-                    {sessionId && (
-                      <button
-                        onClick={() => {
-                          const s = roleplaySessions.find((s) => s.id === sessionId)
-                          if (s) shareSession(s)
-                        }}
-                        className="text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg"
-                      >
-                        {copiedId === sessionId ? '✓ コピー済み' : '共有'}
-                      </button>
-                    )}
+                    <div className="p-5">
+                      <FeedbackDisplay text={feedback} />
+                    </div>
                   </div>
-                  <div className="p-5">
-                    <FeedbackDisplay text={feedback} />
-                  </div>
-                </div>
+                  <RoleplayFollowUpChat
+                    messages={followUpMessages}
+                    input={followUpInput}
+                    setInput={setFollowUpInput}
+                    loading={followUpLoading}
+                    onSend={handleFollowUp}
+                  />
+                </>
               ) : null}
               <button onClick={resetSession} className="w-full py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
                 別のシナリオを練習する
@@ -525,13 +581,49 @@ interface HistoryCardProps {
   onResume: () => void
   onShare: () => void
   onDelete: () => void
+  onUpdateSession: (updated: RoleplaySession) => void
 }
 
-function HistoryCard({ session, expanded, copied, onToggle, onResume, onShare, onDelete }: HistoryCardProps) {
+function HistoryCard({ session, expanded, copied, onToggle, onResume, onShare, onDelete, onUpdateSession }: HistoryCardProps) {
+  const { generate } = useGemini()
   const userTurns = session.messages.filter((m) => m.role === 'user').length
   const is1Q = roleplayScenarios.find((s) => s.id === session.scenarioId)?.level === '1級'
   const myLabel = is1Q ? 'スーパーバイザー' : 'カウンセラー'
   const theirLabel = is1Q ? 'キャリアコンサルタント' : 'クライアント'
+  const [localFollowUp, setLocalFollowUp] = useState<EssayFollowUpMessage[]>(session.followUp || [])
+  const [localInput, setLocalInput] = useState('')
+  const [localLoading, setLocalLoading] = useState(false)
+
+  useEffect(() => { setLocalFollowUp(session.followUp || []) }, [session.followUp])
+
+  const handleLocalFollowUp = async () => {
+    if (!localInput.trim() || localLoading || !session.feedback) return
+    const userMsg: EssayFollowUpMessage = { role: 'user', text: localInput.trim() }
+    const newMessages = [...localFollowUp, userMsg]
+    setLocalFollowUp(newMessages)
+    setLocalInput('')
+    setLocalLoading(true)
+    const history = newMessages.slice(0, -1).map((m) => `${m.role === 'user' ? 'Q' : 'A'}: ${m.text}`).join('\n')
+    const prompt = `あなたはキャリアコンサルティング技能検定の専門家です。
+${is1Q ? 'スーパービジョン' : 'ロールプレイ面談'}のフィードバックについて質問に答えてください。
+
+【シナリオ】${session.scenarioTitle}
+【AIフィードバック】${session.feedback}
+${history ? `\n【これまでのやりとり】\n${history}` : ''}
+
+【質問】${userMsg.text}
+
+日本語で丁寧に答えてください。具体的な改善例や技法の説明も含めてください。`
+    try {
+      const text = await generate(prompt)
+      const aiMsg: EssayFollowUpMessage = { role: 'ai', text }
+      const updated = [...newMessages, aiMsg]
+      setLocalFollowUp(updated)
+      onUpdateSession({ ...session, followUp: updated })
+    } catch { /* error handled by hook */ }
+    setLocalLoading(false)
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <button onClick={onToggle} className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50">
@@ -562,10 +654,19 @@ function HistoryCard({ session, expanded, copied, onToggle, onResume, onShare, o
               ))}
             </div>
             {session.feedback && (
-              <details className="text-xs text-gray-600">
-                <summary className="cursor-pointer font-semibold text-purple-700 py-1">AIフィードバックを見る</summary>
-                <pre className="mt-2 whitespace-pre-wrap font-sans leading-relaxed bg-purple-50 rounded-lg p-3">{session.feedback}</pre>
-              </details>
+              <>
+                <details className="text-xs text-gray-600">
+                  <summary className="cursor-pointer font-semibold text-purple-700 py-1">AIフィードバックを見る</summary>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans leading-relaxed bg-purple-50 rounded-lg p-3">{session.feedback}</pre>
+                </details>
+                <RoleplayFollowUpChat
+                  messages={localFollowUp}
+                  input={localInput}
+                  setInput={setLocalInput}
+                  loading={localLoading}
+                  onSend={handleLocalFollowUp}
+                />
+              </>
             )}
           </div>
           <div className="flex gap-2 px-4 pb-4">
@@ -583,6 +684,67 @@ function HistoryCard({ session, expanded, copied, onToggle, onResume, onShare, o
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+interface RoleplayFollowUpChatProps {
+  messages: EssayFollowUpMessage[]
+  input: string
+  setInput: (v: string) => void
+  loading: boolean
+  onSend: () => void
+}
+
+function RoleplayFollowUpChat({ messages, input, setInput, loading, onSend }: RoleplayFollowUpChatProps) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  return (
+    <div className="bg-white rounded-xl border-2 border-purple-200 overflow-hidden">
+      <div className="bg-purple-50 px-4 py-3 border-b border-purple-100">
+        <p className="text-sm font-semibold text-purple-800">フィードバックについて質問する</p>
+        <p className="text-xs text-purple-500 mt-0.5">評価への疑問・改善方法・具体的な技法などを聞けます</p>
+      </div>
+
+      {messages.length > 0 && (
+        <div className="p-4 space-y-3 max-h-80 overflow-y-auto">
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+                m.role === 'user' ? 'bg-purple-600 text-white rounded-br-sm' : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+              }`}>
+                <pre className="whitespace-pre-wrap font-sans leading-relaxed">{m.text}</pre>
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-500">考え中...</div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
+
+      <div className="p-3 flex gap-2 border-t border-gray-100">
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); onSend() } }}
+          placeholder="質問を入力…（Shift+Enterで送信）"
+          rows={2}
+          disabled={loading}
+          className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-purple-400 resize-none disabled:opacity-50"
+        />
+        <button
+          onClick={onSend}
+          disabled={loading || !input.trim()}
+          className="px-3 py-2 bg-purple-600 text-white text-sm rounded-xl hover:bg-purple-700 disabled:opacity-50 self-end"
+        >
+          送信
+        </button>
+      </div>
     </div>
   )
 }

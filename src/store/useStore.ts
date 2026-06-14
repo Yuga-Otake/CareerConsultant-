@@ -52,6 +52,7 @@ export interface RoleplaySession {
   clientProfile: string
   messages: RoleplayMessage[]
   feedback: string
+  followUp?: EssayFollowUpMessage[]
   date: string
   completed: boolean
 }
