@@ -39,6 +39,12 @@ export interface RoleplayMessage {
   text: string
 }
 
+export interface EssayDraft {
+  questionId: string
+  answer: string
+  subAnswers: string[]
+}
+
 export interface RoleplaySession {
   id: string
   scenarioId: string
@@ -65,6 +71,8 @@ interface AppState {
   deleteEssayRecord: (id: string) => void
   addEmpathyRecord: (record: EmpathyRecord) => void
   deleteEmpathyRecord: (id: string) => void
+  essayDraft: EssayDraft | null
+  setEssayDraft: (draft: EssayDraft | null) => void
   saveRoleplaySession: (session: RoleplaySession) => void
   deleteRoleplaySession: (id: string) => void
   resetProgress: () => void
@@ -77,6 +85,7 @@ export const useStore = create<AppState>()(
       level: '2級',
       quizProgress: { correct: 0, total: 0, wrongIds: [] },
       essayRecords: [],
+      essayDraft: null,
       empathyRecords: [],
       roleplaySessions: [],
       setApiKey: (key) => set({ apiKey: key }),
@@ -105,6 +114,7 @@ export const useStore = create<AppState>()(
         set((state) => ({
           essayRecords: state.essayRecords.filter((r) => r.id !== id),
         })),
+      setEssayDraft: (draft) => set({ essayDraft: draft }),
       addEmpathyRecord: (record) =>
         set((state) => ({ empathyRecords: [record, ...state.empathyRecords.slice(0, 49)] })),
       deleteEmpathyRecord: (id) =>

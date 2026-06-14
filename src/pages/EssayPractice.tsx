@@ -58,7 +58,7 @@ type SubScores = (SubScore | null)[]
 // Main page component
 // ────────────────────────────────────────────────────────────
 export default function EssayPractice() {
-  const { level, addEssayRecord, updateEssayRecord, deleteEssayRecord, essayRecords } = useStore()
+  const { level, addEssayRecord, updateEssayRecord, deleteEssayRecord, essayRecords, essayDraft, setEssayDraft } = useStore()
   const { generate, loading, error } = useGemini()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [answer, setAnswer] = useState('')
@@ -95,7 +95,7 @@ export default function EssayPractice() {
     : false
   const hasScoredSome = subScores.some((s) => s !== null)
 
-  const resetState = () => {
+  const resetState = (clearDraft = true) => {
     setAnswer('')
     setScoreResult(null)
     setRawFeedback('')
@@ -107,13 +107,34 @@ export default function EssayPractice() {
     setCurrentRecordId(null)
     setFollowUpMessages([])
     setFollowUpInput('')
+    if (clearDraft) setEssayDraft(null)
   }
+
+  // Resume from draft
+  const resumeDraft = () => {
+    if (!essayDraft) return
+    setSelectedId(essayDraft.questionId)
+    setAnswer(essayDraft.answer)
+    setSubAnswers(essayDraft.subAnswers.length === 3 ? essayDraft.subAnswers : ['', '', ''])
+  }
+
+  // Auto-save draft when writing (not yet scored)
+  useEffect(() => {
+    if (!selectedId || currentRecordId) return
+    const isTranscriptQ = transcriptQuestions.some((q) => q.id === selectedId)
+    const hasContent = isTranscriptQ ? subAnswers.some((a) => a.trim()) : answer.trim()
+    if (hasContent) {
+      setEssayDraft({ questionId: selectedId, answer, subAnswers })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answer, subAnswers, selectedId])
 
   // Auto-save when all transcript sub-questions are scored
   useEffect(() => {
     if (!selectedTranscript || !allScored || currentRecordId) return
     const id = `essay-${Date.now()}`
     setCurrentRecordId(id)
+    setEssayDraft(null)
     const combined = subScores
       .map((s, i) => (s ? `【問${i + 1}のフィードバック】\n${s.raw}` : ''))
       .filter(Boolean)
@@ -163,6 +184,7 @@ ${selectedEssay.scoringCriteria.map((c, i) => `${i + 1}. ${c.split('（')[0]}：
       if (!currentRecordId) {
         const id = `essay-${Date.now()}`
         setCurrentRecordId(id)
+        setEssayDraft(null)
         addEssayRecord({
           id,
           questionId: selectedEssay.id,
@@ -389,6 +411,40 @@ ${userMsg.text}
             <div className="space-y-4">
               <p className="text-sm text-gray-500">問題を選んで練習しましょう（{level}対応）</p>
 
+              {/* Resume draft banner */}
+              {essayDraft && (() => {
+                const draftTQ = transcriptQuestions.find((q) => q.id === essayDraft.questionId)
+                const draftEQ = essayQuestions.find((q) => q.id === essayDraft.questionId)
+                const draftTitle = draftTQ?.title ?? draftEQ?.question.slice(0, 40)
+                const filledCount = draftTQ
+                  ? essayDraft.subAnswers.filter((a) => a.trim()).length
+                  : essayDraft.answer.trim() ? 1 : 0
+                if (!draftTitle || filledCount === 0) return null
+                return (
+                  <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-indigo-600 mb-0.5">前回の続き</p>
+                      <p className="text-sm font-medium text-gray-800 truncate">{draftTitle}{draftTitle && draftTQ ? '' : '…'}</p>
+                      <p className="text-xs text-indigo-500 mt-0.5">{draftTQ ? `${filledCount}/3問 回答済み` : '回答を入力中'}</p>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => { resetState(false); resumeDraft() }}
+                        className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 font-medium"
+                      >
+                        続きから
+                      </button>
+                      <button
+                        onClick={() => setEssayDraft(null)}
+                        className="px-3 py-2 text-gray-400 hover:text-gray-600 text-sm"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
+
               {filteredTranscript.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">逐語記録論述（キャリアデザイン出版 模擬問題）</p>
@@ -451,7 +507,7 @@ ${userMsg.text}
                 allScored={allScored}
                 hasScoredSome={hasScoredSome}
                 totalSubScore={totalSubScore}
-                onBack={() => { setSelectedId(null); resetState() }}
+                onBack={() => { setSelectedId(null); resetState(currentRecordId !== null) }}
                 onScoreOne={handleScoreTranscript}
                 onScoreAll={handleScoreAll}
               />
@@ -482,7 +538,7 @@ ${userMsg.text}
           ) : selectedEssay ? (
             <div className="space-y-4">
               <button
-                onClick={() => { setSelectedId(null); resetState() }}
+                onClick={() => { setSelectedId(null); resetState(currentRecordId !== null) }}
                 className="text-sm text-indigo-600 hover:underline"
               >
                 ← 問題一覧に戻る
