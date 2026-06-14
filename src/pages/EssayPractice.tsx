@@ -739,6 +739,19 @@ function FollowUpChat({ messages, input, setInput, loading, onSend, disabled }: 
 // ────────────────────────────────────────────────────────────
 // Transcript practice view
 // ────────────────────────────────────────────────────────────
+interface Highlight {
+  start: number
+  end: number
+  color: string
+}
+
+const MARKER_COLORS = [
+  { color: '#FEF08A', label: '黄' },
+  { color: '#BBF7D0', label: '緑' },
+  { color: '#BAE6FD', label: '青' },
+  { color: '#FBCFE8', label: '桃' },
+]
+
 interface TranscriptPracticeProps {
   question: TranscriptQuestion
   subAnswers: string[]
@@ -774,6 +787,62 @@ function TranscriptPractice({
     return pct >= 0.8 ? 'text-green-600' : pct >= 0.6 ? 'text-orange-500' : 'text-red-500'
   }
 
+  // Highlight state
+  const [highlights, setHighlights] = useState<Highlight[]>([])
+  const [markerColor, setMarkerColor] = useState<string>('#FEF08A')
+  const [eraseMode, setEraseMode] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const transcriptRef = useRef<HTMLDivElement>(null)
+
+  const applyMarker = () => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !transcriptRef.current) return
+    const range = sel.getRangeAt(0)
+    if (!transcriptRef.current.contains(range.commonAncestorContainer)) return
+
+    const preRange = document.createRange()
+    preRange.selectNodeContents(transcriptRef.current)
+    preRange.setEnd(range.startContainer, range.startOffset)
+    const start = preRange.toString().length
+    preRange.setEnd(range.endContainer, range.endOffset)
+    const end = preRange.toString().length
+    if (start >= end) return
+    sel.removeAllRanges()
+
+    if (eraseMode) {
+      setHighlights((prev) => prev.filter((h) => h.end <= start || h.start >= end))
+    } else {
+      setHighlights((prev) => {
+        const cleaned = prev.filter((h) => h.end <= start || h.start >= end)
+        return [...cleaned, { start, end, color: markerColor }].sort((a, b) => a.start - b.start)
+      })
+    }
+  }
+
+  const renderTranscript = () => {
+    const text = question.transcript
+    const sorted = [...highlights].sort((a, b) => a.start - b.start)
+    const parts: React.ReactNode[] = []
+    let pos = 0
+    for (const h of sorted) {
+      if (h.start > pos) parts.push(<span key={`t${pos}`}>{text.slice(pos, h.start)}</span>)
+      parts.push(
+        <mark key={`h${h.start}`} style={{ backgroundColor: h.color, borderRadius: '2px', padding: '0 1px' }}>
+          {text.slice(h.start, h.end)}
+        </mark>
+      )
+      pos = h.end
+    }
+    if (pos < text.length) parts.push(<span key={`tend`}>{text.slice(pos)}</span>)
+    return parts
+  }
+
+  const copyTranscript = async () => {
+    await navigator.clipboard.writeText(question.transcript)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
     <>
       <button onClick={onBack} className="text-sm text-indigo-600 hover:underline">
@@ -804,7 +873,49 @@ function TranscriptPractice({
         </button>
         {showTranscript && (
           <div className="px-4 pb-4 border-t border-gray-100">
-            <pre className="text-sm text-gray-800 whitespace-pre-wrap font-sans leading-relaxed pt-3">{question.transcript}</pre>
+            {/* Marker toolbar */}
+            <div className="flex items-center gap-1.5 pt-3 pb-2 flex-wrap">
+              <span className="text-xs text-gray-500 mr-0.5">マーカー：</span>
+              {MARKER_COLORS.map(({ color, label }) => (
+                <button
+                  key={color}
+                  onClick={() => { setMarkerColor(color); setEraseMode(false) }}
+                  style={{ backgroundColor: color }}
+                  className={`w-6 h-6 rounded-full border-2 text-xs transition-all ${!eraseMode && markerColor === color ? 'border-gray-600 scale-110' : 'border-gray-200'}`}
+                  title={label}
+                />
+              ))}
+              <button
+                onClick={() => setEraseMode((e) => !e)}
+                className={`px-2 py-0.5 rounded-full border-2 text-xs transition-all ${eraseMode ? 'border-gray-600 bg-gray-200' : 'border-gray-200 bg-gray-100 text-gray-500'}`}
+                title="消去"
+              >
+                消去
+              </button>
+              {highlights.length > 0 && (
+                <button
+                  onClick={() => setHighlights([])}
+                  className="px-2 py-0.5 rounded-full border border-red-200 text-xs text-red-400 hover:bg-red-50"
+                >
+                  全消去
+                </button>
+              )}
+              <div className="flex-1" />
+              <button
+                onClick={copyTranscript}
+                className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 flex items-center gap-1"
+              >
+                {copied ? '✅ コピー済み' : '📋 コピー'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-2">テキストを選択すると色が付きます</p>
+            <div
+              ref={transcriptRef}
+              onPointerUp={applyMarker}
+              className="text-sm text-gray-800 whitespace-pre-wrap font-sans leading-relaxed select-text cursor-text"
+            >
+              {renderTranscript()}
+            </div>
           </div>
         )}
       </div>
