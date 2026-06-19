@@ -190,7 +190,7 @@ ${history}
 
     const prompt = is1Q
       ? `あなたはキャリアコンサルティング技能検定1級の評価者です。
-以下のスーパービジョン記録を評価してください。
+以下のスーパービジョン記録と受験者の口頭試問回答を踏まえて評価してください。
 
 【シナリオ】${selected.title}
 【スーパーバイジー（後輩CC）】${selected.clientProfile}
@@ -200,7 +200,12 @@ ${selected.evaluationPoints.join('\n')}
 
 【スーパービジョン記録】
 ${history}
-
+${oral ? `
+【スーパーバイザーの口頭試問回答】
+①良かった点・改善したい点：${oral.goodPoints}
+②事例の進め方の問題：${oral.assessment}
+③共有のための働きかけ：${oral.futurePlan}
+` : ''}
 以下の形式で評価してください：
 
 ## 総合評価
@@ -214,7 +219,9 @@ ${history}
 
 ## 各観点の評価
 ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメント）`).join('\n')}
-
+${oral ? `
+## 口頭試問の自己評価について
+受験者の口頭試問回答と実際のスーパービジョン内容を照らし合わせ、自己評価の正確さ・気づきの深さを2〜3点コメントすること。` : ''}
 ## 次のステップ
 （スーパーバイザーとして成長するためのポイント）`
       : `あなたはキャリアコンサルティング技能検定2級の評価者です。
@@ -546,28 +553,19 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
                   送信
                 </button>
               </div>
-              {selected.level === '1級' ? (
-                <button
-                  onClick={() => endAndEvaluate()}
-                  disabled={userTurns < 2}
-                  className="w-full py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
-                >
-                  面談を終了してフィードバックを受ける
-                </button>
-              ) : (
-                <button
-                  onClick={() => setPhase('oral')}
-                  disabled={userTurns < 2}
-                  className="w-full py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
-                >
-                  面談を終了して口頭試問へ
-                </button>
-              )}
+              <button
+                onClick={() => setPhase('oral')}
+                disabled={userTurns < 2}
+                className="w-full py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
+              >
+                {selected.level === '1級' ? 'スーパービジョンを終了して口頭試問へ' : '面談を終了して口頭試問へ'}
+              </button>
             </div>
           )}
 
           {phase === 'oral' && (
             <OralExamPanel
+              is1Q={selected.level === '1級'}
               onSubmit={(answers) => endAndEvaluate(answers)}
               onBack={() => setPhase('chat')}
               goodPoints={oralGoodPoints}
@@ -727,8 +725,8 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
                 <summary className="cursor-pointer font-semibold text-indigo-700 py-1">口頭試問の回答を見る</summary>
                 <div className="mt-2 bg-indigo-50 rounded-lg p-3 space-y-2">
                   <p><span className="font-medium text-indigo-700">①良かった点・改善点：</span>{session.oralAnswers.goodPoints}</p>
-                  <p><span className="font-medium text-indigo-700">②問題の見立て：</span>{session.oralAnswers.assessment}</p>
-                  <p><span className="font-medium text-indigo-700">③今後の展開：</span>{session.oralAnswers.futurePlan}</p>
+                  <p><span className="font-medium text-indigo-700">{is1Q ? '②事例の進め方の問題：' : '②問題の見立て：'}</span>{session.oralAnswers.assessment}</p>
+                  <p><span className="font-medium text-indigo-700">{is1Q ? '③共有のための働きかけ：' : '③今後の展開：'}</span>{session.oralAnswers.futurePlan}</p>
                 </div>
               </details>
             )}
@@ -829,6 +827,7 @@ function RoleplayFollowUpChat({ messages, input, setInput, loading, onSend }: Ro
 }
 
 interface OralExamPanelProps {
+  is1Q?: boolean
   onSubmit: (answers: OralAnswers) => void
   onBack: () => void
   goodPoints: string
@@ -839,51 +838,67 @@ interface OralExamPanelProps {
   setFuturePlan: (v: string) => void
 }
 
-function OralExamPanel({ onSubmit, onBack, goodPoints, setGoodPoints, assessment, setAssessment, futurePlan, setFuturePlan }: OralExamPanelProps) {
+function OralExamPanel({ is1Q, onSubmit, onBack, goodPoints, setGoodPoints, assessment, setAssessment, futurePlan, setFuturePlan }: OralExamPanelProps) {
   const canSubmit = goodPoints.trim() && assessment.trim() && futurePlan.trim()
+
+  const q1 = is1Q
+    ? '今回のロールプレイを振り返って、良かった点・改善したい点は何ですか。'
+    : '面談を振り返って、良かった点と改善したい点を教えてください。'
+  const q1placeholder = is1Q
+    ? '例：スーパーバイジーの気持ちに寄り添えた。一方で、ケースの核心に踏み込む問いかけが不足していた。'
+    : '例：傾聴を意識して相槌を打てた。一方で、クライアントの感情への共感が薄かったと感じる。'
+  const q2 = is1Q
+    ? 'この事例相談者（スーパーバイジー）の事例の進め方の問題は何ですか。'
+    : '相談者の問題点をどう見立てましたか？（相談者・キャリコン両視点で）'
+  const q2placeholder = is1Q
+    ? '例：スーパーバイジーがクライアントの感情面への対応を後回しにし、情報収集に偏った面談をしている点。'
+    : '例：相談者視点では転職への不安が主訴。CC視点では自己効力感の低下と環境要因の整理が必要と見立てた。'
+  const q3 = is1Q
+    ? 'その問題を事例相談者と共有するために、どのような働きかけをしましたか。'
+    : '今後の面談の展開をどのように考えますか？'
+  const q3placeholder = is1Q
+    ? '例：「クライアントがその時どんな気持ちだったか」と問いかけ、感情への着目を促した。'
+    : '例：次回は職業興味の棚卸しを行い、具体的な求人情報の収集方法を一緒に検討する予定。'
 
   return (
     <div className="space-y-4">
       <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
         <h2 className="font-bold text-indigo-800 text-base mb-1">口頭試問</h2>
-        <p className="text-xs text-indigo-600">2級実技試験と同様に、面談終了後に3問に答えてください。回答はAIフィードバックに反映されます。</p>
+        <p className="text-xs text-indigo-600">
+          {is1Q ? '1級実技試験と同様に、スーパービジョン終了後に3問に答えてください。' : '2級実技試験と同様に、面談終了後に3問に答えてください。'}
+          回答はAIフィードバックに反映されます。
+        </p>
       </div>
 
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Q1. 面談を振り返って、良かった点と改善したい点を教えてください。
-          </label>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">Q1. {q1}</label>
           <textarea
             value={goodPoints}
             onChange={(e) => setGoodPoints(e.target.value)}
-            placeholder="例：傾聴を意識して相槌を打てた。一方で、クライアントの感情への共感が薄かったと感じる。"
+            placeholder={q1placeholder}
             rows={3}
             className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Q2. 相談者の問題点をどう見立てましたか？（相談者・キャリコン両視点で）
-          </label>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">Q2. {q2}</label>
           <textarea
             value={assessment}
             onChange={(e) => setAssessment(e.target.value)}
-            placeholder="例：相談者視点では転職への不安が主訴。CC視点では自己効力感の低下と環境要因の整理が必要と見立てた。"
+            placeholder={q2placeholder}
             rows={3}
             className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-1">
-            Q3. 今後の面談の展開をどのように考えますか？
-          </label>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">Q3. {q3}</label>
           <textarea
             value={futurePlan}
             onChange={(e) => setFuturePlan(e.target.value)}
-            placeholder="例：次回は職業興味の棚卸しを行い、具体的な求人情報の収集方法を一緒に検討する予定。"
+            placeholder={q3placeholder}
             rows={3}
             className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none"
           />
@@ -895,7 +910,7 @@ function OralExamPanel({ onSubmit, onBack, goodPoints, setGoodPoints, assessment
           onClick={onBack}
           className="px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50"
         >
-          ← 面談に戻る
+          {is1Q ? '← スーパービジョンに戻る' : '← 面談に戻る'}
         </button>
         <button
           onClick={() => onSubmit({ goodPoints: goodPoints.trim(), assessment: assessment.trim(), futurePlan: futurePlan.trim() })}
