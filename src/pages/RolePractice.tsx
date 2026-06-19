@@ -228,23 +228,26 @@ ${history}
 ## 改善すべき点
 （具体的な発言・場面を指摘しながら2〜3点）
 
-## 4観点の評価
+## 4観点の評価（各100点満点・60点以上で合格水準）
 
-### ①基本的態度
+### ①基本的態度：XX点
 キャリアコンサルタントとしてありのままを受容し、言語・非言語で適切に表現できているか。相談者の個別問題に応じた助言や情報提供が適切にできているか。
-（具体的な評価コメント）
+（具体的な評価コメント。XXには0〜100の整数スコアを入れること）
 
-### ②関係構築力
+### ②関係構築力：XX点
 受容的・共感的・誠実な態度を維持しつつ、理論やスキルを用いた関わりができているか。
-（具体的な評価コメント）
+（具体的な評価コメント。XXには0〜100の整数スコアを入れること）
 
-### ③問題把握力
+### ③問題把握力：XX点
 相談者の訴えを傾聴し、問題の背景にある本質的な問題を捉えられているか。
-（具体的な評価コメント）
+（具体的な評価コメント。XXには0〜100の整数スコアを入れること）
 
-### ④具体的展開力
+### ④具体的展開力：XX点
 相談者と共に目標を設定し、それを達成するための具体的な方策や展開ができているか。
-（具体的な評価コメント）
+（具体的な評価コメント。XXには0〜100の整数スコアを入れること）
+
+## 総合判定
+全4項目が60点以上の場合「合格水準」、1項目でも60点未満の場合「不合格水準：要改善」と明記し、その理由を1〜2文で述べること。
 
 ## 次のステップ
 （この練習から学べる技法・改善点）`
@@ -766,6 +769,24 @@ function FeedbackDisplay({ text }: { text: string }) {
     <div className="space-y-1 text-sm text-gray-700 leading-relaxed">
       {text.split('\n').filter(Boolean).map((line, i) => {
         if (line.startsWith('## ')) return <h3 key={i} className="text-base font-bold text-purple-700 mt-4 mb-1">{line.replace('## ', '')}</h3>
+        if (line.startsWith('### ')) {
+          const heading = line.replace('### ', '')
+          const scoreMatch = heading.match(/：(\d+)点/)
+          if (scoreMatch) {
+            const score = parseInt(scoreMatch[1])
+            const pass = score >= 60
+            const label = heading.replace(/：\d+点/, '')
+            return (
+              <div key={i} className="flex items-center gap-2 mt-3 mb-0.5">
+                <h4 className="text-sm font-bold text-gray-800">{label}</h4>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${pass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                  {score}点 {pass ? '✓合格' : '✗要改善'}
+                </span>
+              </div>
+            )
+          }
+          return <h4 key={i} className="text-sm font-bold text-gray-800 mt-3 mb-0.5">{heading}</h4>
+        }
         if (line.startsWith('- ')) return <p key={i} className="pl-4 before:content-['・'] before:-ml-4">{line.replace(/^- /, '')}</p>
         return <p key={i}>{line}</p>
       })}
