@@ -45,6 +45,12 @@ export interface EssayDraft {
   subAnswers: string[]
 }
 
+export interface OralAnswers {
+  goodPoints: string
+  assessment: string
+  futurePlan: string
+}
+
 export interface RoleplaySession {
   id: string
   scenarioId: string
@@ -53,6 +59,7 @@ export interface RoleplaySession {
   messages: RoleplayMessage[]
   feedback: string
   followUp?: EssayFollowUpMessage[]
+  oralAnswers?: OralAnswers
   date: string
   completed: boolean
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { roleplayScenarios } from '../data/roleplayScenarios'
-import { useStore, type RoleplaySession, type EssayFollowUpMessage } from '../store/useStore'
+import { useStore, type RoleplaySession, type EssayFollowUpMessage, type OralAnswers } from '../store/useStore'
 import { useGemini } from '../hooks/useGemini'
 
 type Message = { role: 'user' | 'client' | 'system'; text: string }
@@ -13,7 +13,10 @@ export default function RolePractice() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [phase, setPhase] = useState<'select' | 'chat' | 'feedback'>('select')
+  const [phase, setPhase] = useState<'select' | 'chat' | 'oral' | 'feedback'>('select')
+  const [oralGoodPoints, setOralGoodPoints] = useState('')
+  const [oralAssessment, setOralAssessment] = useState('')
+  const [oralFuturePlan, setOralFuturePlan] = useState('')
   const [feedback, setFeedback] = useState('')
   const [feedbackLoading, setFeedbackLoading] = useState(false)
   const [feedbackError, setFeedbackError] = useState(false)
@@ -63,6 +66,9 @@ export default function RolePractice() {
     setRetryFn(null)
     setFollowUpMessages([])
     setFollowUpInput('')
+    setOralGoodPoints('')
+    setOralAssessment('')
+    setOralFuturePlan('')
   }, [])
 
   const startSession = useCallback(async (scenario: typeof roleplayScenarios[0]) => {
@@ -114,6 +120,9 @@ export default function RolePractice() {
     setFollowUpInput('')
     setFeedbackError(false)
     setRetryFn(null)
+    setOralGoodPoints(session.oralAnswers?.goodPoints || '')
+    setOralAssessment(session.oralAnswers?.assessment || '')
+    setOralFuturePlan(session.oralAnswers?.futurePlan || '')
     setPhase(session.completed ? 'feedback' : 'chat')
     setTab('scenarios')
   }, [])
@@ -164,7 +173,7 @@ ${history}
     }
   }, [input, selected, sessionId, loading, messages, generate, persistSession])
 
-  const endAndEvaluate = useCallback(async () => {
+  const endAndEvaluate = useCallback(async (oral?: OralAnswers) => {
     if (!selected || !sessionId) return
     setFeedbackLoading(true)
     setFeedbackError(false)
@@ -209,14 +218,19 @@ ${selected.evaluationPoints.map((p) => `- ${p.split('：')[0]}：（評価コメ
 ## 次のステップ
 （スーパーバイザーとして成長するためのポイント）`
       : `あなたはキャリアコンサルティング技能検定2級の評価者です。
-以下のロールプレイ面談記録を、検定の4評価項目を中心に評価してください。
+以下のロールプレイ面談記録と受験者の口頭試問回答を踏まえて評価してください。
 
 【シナリオ】${selected.title}
 【クライアント】${selected.clientProfile}
 
 【面談記録】
 ${history}
-
+${oral ? `
+【受験者の口頭試問回答】
+①良かった点・改善点：${oral.goodPoints}
+②問題の見立て（相談者・CC視点）：${oral.assessment}
+③今後の展開：${oral.futurePlan}
+` : ''}
 以下の形式で評価してください：
 
 ## 総合評価
@@ -248,7 +262,9 @@ ${history}
 
 ## 総合判定
 全4項目が60点以上の場合「合格水準」、1項目でも60点未満の場合「不合格水準：要改善」と明記し、その理由を1〜2文で述べること。
-
+${oral ? `
+## 口頭試問の自己評価について
+受験者の口頭試問回答と実際の面談内容を照らし合わせ、自己評価の正確さ・気づきの深さを2〜3点コメントすること。` : ''}
 ## 次のステップ
 （この練習から学べる技法・改善点）`
 
@@ -256,13 +272,23 @@ ${history}
       const text = await generate(prompt)
       setFeedback(text)
       setFeedbackError(false)
-      persistSession(sessionId, selected, messages, text, true)
+      saveRoleplaySession({
+        id: sessionId,
+        scenarioId: selected.id,
+        scenarioTitle: selected.title,
+        clientProfile: selected.clientProfile,
+        messages,
+        feedback: text,
+        oralAnswers: oral,
+        date: new Date().toLocaleDateString('ja-JP'),
+        completed: true,
+      })
     } catch {
       setFeedbackError(true)
     } finally {
       setFeedbackLoading(false)
     }
-  }, [selected, sessionId, messages, generate, persistSession])
+  }, [selected, sessionId, messages, generate, saveRoleplaySession])
 
   const handleFollowUp = useCallback(async () => {
     if (!followUpInput.trim() || followUpLoading || !selected || !sessionId) return
@@ -434,7 +460,7 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
         </>
       )}
 
-      {(phase === 'chat' || phase === 'feedback') && selected && (
+      {(phase === 'chat' || phase === 'oral' || phase === 'feedback') && selected && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -520,14 +546,37 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
                   送信
                 </button>
               </div>
-              <button
-                onClick={endAndEvaluate}
-                disabled={userTurns < 2}
-                className="w-full py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
-              >
-                面談を終了してフィードバックを受ける
-              </button>
+              {selected.level === '1級' ? (
+                <button
+                  onClick={() => endAndEvaluate()}
+                  disabled={userTurns < 2}
+                  className="w-full py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  面談を終了してフィードバックを受ける
+                </button>
+              ) : (
+                <button
+                  onClick={() => setPhase('oral')}
+                  disabled={userTurns < 2}
+                  className="w-full py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  面談を終了して口頭試問へ
+                </button>
+              )}
             </div>
+          )}
+
+          {phase === 'oral' && (
+            <OralExamPanel
+              onSubmit={(answers) => endAndEvaluate(answers)}
+              onBack={() => setPhase('chat')}
+              goodPoints={oralGoodPoints}
+              setGoodPoints={setOralGoodPoints}
+              assessment={oralAssessment}
+              setAssessment={setOralAssessment}
+              futurePlan={oralFuturePlan}
+              setFuturePlan={setOralFuturePlan}
+            />
           )}
 
           {phase === 'feedback' && (
@@ -540,7 +589,12 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
               ) : feedbackError ? (
                 <div className="flex flex-col items-center gap-3 p-6 bg-red-50 border border-red-200 rounded-xl">
                   <p className="text-sm text-red-600">フィードバックの生成に失敗しました（会話記録は保持されています）</p>
-                  <button onClick={endAndEvaluate} className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700">
+                  <button
+                    onClick={() => endAndEvaluate(
+                      oralGoodPoints ? { goodPoints: oralGoodPoints, assessment: oralAssessment, futurePlan: oralFuturePlan } : undefined
+                    )}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700"
+                  >
                     🔄 再生成
                   </button>
                 </div>
@@ -668,6 +722,16 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
                 </div>
               ))}
             </div>
+            {session.oralAnswers && (
+              <details className="text-xs text-gray-600">
+                <summary className="cursor-pointer font-semibold text-indigo-700 py-1">口頭試問の回答を見る</summary>
+                <div className="mt-2 bg-indigo-50 rounded-lg p-3 space-y-2">
+                  <p><span className="font-medium text-indigo-700">①良かった点・改善点：</span>{session.oralAnswers.goodPoints}</p>
+                  <p><span className="font-medium text-indigo-700">②問題の見立て：</span>{session.oralAnswers.assessment}</p>
+                  <p><span className="font-medium text-indigo-700">③今後の展開：</span>{session.oralAnswers.futurePlan}</p>
+                </div>
+              </details>
+            )}
             {session.feedback && (
               <>
                 <details className="text-xs text-gray-600">
@@ -758,6 +822,87 @@ function RoleplayFollowUpChat({ messages, input, setInput, loading, onSend }: Ro
           className="px-3 py-2 bg-purple-600 text-white text-sm rounded-xl hover:bg-purple-700 disabled:opacity-50 self-end"
         >
           送信
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface OralExamPanelProps {
+  onSubmit: (answers: OralAnswers) => void
+  onBack: () => void
+  goodPoints: string
+  setGoodPoints: (v: string) => void
+  assessment: string
+  setAssessment: (v: string) => void
+  futurePlan: string
+  setFuturePlan: (v: string) => void
+}
+
+function OralExamPanel({ onSubmit, onBack, goodPoints, setGoodPoints, assessment, setAssessment, futurePlan, setFuturePlan }: OralExamPanelProps) {
+  const canSubmit = goodPoints.trim() && assessment.trim() && futurePlan.trim()
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+        <h2 className="font-bold text-indigo-800 text-base mb-1">口頭試問</h2>
+        <p className="text-xs text-indigo-600">2級実技試験と同様に、面談終了後に3問に答えてください。回答はAIフィードバックに反映されます。</p>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            Q1. 面談を振り返って、良かった点と改善したい点を教えてください。
+          </label>
+          <textarea
+            value={goodPoints}
+            onChange={(e) => setGoodPoints(e.target.value)}
+            placeholder="例：傾聴を意識して相槌を打てた。一方で、クライアントの感情への共感が薄かったと感じる。"
+            rows={3}
+            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            Q2. 相談者の問題点をどう見立てましたか？（相談者・キャリコン両視点で）
+          </label>
+          <textarea
+            value={assessment}
+            onChange={(e) => setAssessment(e.target.value)}
+            placeholder="例：相談者視点では転職への不安が主訴。CC視点では自己効力感の低下と環境要因の整理が必要と見立てた。"
+            rows={3}
+            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-1">
+            Q3. 今後の面談の展開をどのように考えますか？
+          </label>
+          <textarea
+            value={futurePlan}
+            onChange={(e) => setFuturePlan(e.target.value)}
+            placeholder="例：次回は職業興味の棚卸しを行い、具体的な求人情報の収集方法を一緒に検討する予定。"
+            rows={3}
+            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none"
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-3">
+        <button
+          onClick={onBack}
+          className="px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50"
+        >
+          ← 面談に戻る
+        </button>
+        <button
+          onClick={() => onSubmit({ goodPoints: goodPoints.trim(), assessment: assessment.trim(), futurePlan: futurePlan.trim() })}
+          disabled={!canSubmit}
+          className="flex-1 py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
+        >
+          AIフィードバックを受ける
         </button>
       </div>
     </div>
