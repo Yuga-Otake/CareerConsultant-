@@ -350,6 +350,16 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
         .filter((m) => m.role !== 'system')
         .map((m) => `${m.role === 'user' ? myLabel : theirLabel}：${m.text}`),
     ]
+    if (session.oralAnswers) {
+      const lbl2 = is1QSession ? '事例の進め方の問題' : '問題の見立て'
+      const lbl3 = is1QSession ? '共有のための働きかけ' : '今後の展開'
+      lines.push(
+        '', '--- 口頭試問の回答 ---',
+        `①良かった点・改善点：${session.oralAnswers.goodPoints}`,
+        `②${lbl2}：${session.oralAnswers.assessment}`,
+        `③${lbl3}：${session.oralAnswers.futurePlan}`
+      )
+    }
     if (session.feedback) {
       lines.push('', '--- AIフィードバック ---', session.feedback)
     }
@@ -579,6 +589,14 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
 
           {phase === 'feedback' && (
             <div className="space-y-4">
+              {oralGoodPoints && (
+                <div className="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-4 text-sm text-indigo-800 space-y-2">
+                  <h3 className="font-semibold text-indigo-700">あなたの口頭試問回答</h3>
+                  <p><span className="font-medium">①良かった点・改善点：</span>{oralGoodPoints}</p>
+                  <p><span className="font-medium">{selected.level === '1級' ? '②事例の進め方の問題：' : '②問題の見立て：'}</span>{oralAssessment}</p>
+                  <p><span className="font-medium">{selected.level === '1級' ? '③共有のための働きかけ：' : '③今後の展開：'}</span>{oralFuturePlan}</p>
+                </div>
+              )}
               {feedbackLoading ? (
                 <div className="flex items-center gap-3 p-6 bg-white rounded-xl border-2 border-purple-100">
                   <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
