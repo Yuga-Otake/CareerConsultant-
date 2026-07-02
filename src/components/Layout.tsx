@@ -7,9 +7,9 @@ const navItems = [
   { to: '/web-info', label: 'Web情報', icon: '🌐' },
   { to: '/quiz', label: '知識確認', icon: '📝' },
   { to: '/essay', label: '論述練習', icon: '✍️' },
-  { to: '/roleplay', label: 'ロープレ', icon: '🎭' },
-  { to: '/empathy', label: '共感練習', icon: '💬' },
-]
+  { to: '/roleplay', label: 'ロープレ', icon: '🎭', badge: 'AI' },
+  { to: '/empathy', label: '共感練習', icon: '💬', badge: 'AI' },
+] as const
 
 export default function Layout() {
   const { apiKey, setApiKey, level, setLevel } = useStore()
@@ -56,6 +56,11 @@ export default function Layout() {
             >
               <span>{item.icon}</span>
               <span>{item.label}</span>
+              {'badge' in item && item.badge && (
+                <span className="text-[9px] font-bold bg-amber-400 text-amber-900 px-1 py-px rounded leading-none">
+                  {item.badge}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
