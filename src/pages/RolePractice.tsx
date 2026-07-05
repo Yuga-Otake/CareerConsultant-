@@ -5,6 +5,51 @@ import { useGemini } from '../hooks/useGemini'
 
 type Message = { role: 'user' | 'client' | 'system'; text: string }
 
+const CLIENT_VARIANTS_2Q = [
+  { id: '標準', label: 'シナリオ通り（標準）', description: 'シナリオの設定通りに演じます' },
+  { id: '素直', label: '素直タイプ', description: '比較的早く本音を話す。話しやすい雰囲気' },
+  { id: '内向的', label: '内向的タイプ', description: '答えが短い。自分から話さない。沈黙が多い' },
+  { id: '感情的', label: '感情的タイプ', description: '感情の波が激しい。涙ぐむことも' },
+  { id: '防衛的', label: '防衛的タイプ', description: 'アドバイスへの抵抗が強い。心を開きにくい' },
+]
+
+const CLIENT_VARIANTS_1Q = [
+  { id: '標準', label: 'シナリオ通り（標準）', description: 'シナリオの設定通りに演じます' },
+  { id: '素直', label: '素直タイプ', description: 'フィードバックを受け入れやすい。課題を自覚している' },
+  { id: '防衛的', label: '防衛的タイプ', description: '自分のスタイルへの指摘に抵抗する' },
+  { id: '混乱', label: '混乱タイプ', description: 'ケースの見立てが整理できておらず、迷いが多い' },
+  { id: '自信過剰', label: '自信過剰タイプ', description: '自分の技術に自信があり、修正提案を軽視する' },
+]
+
+function getVariantModifier(variant: string, is1Q: boolean): string {
+  if (variant === '標準') return ''
+  if (is1Q) {
+    switch (variant) {
+      case '素直':
+        return '\n\n【キャラクター調整】\n今回は素直なタイプとして演じてください。スーパーバイザーのフィードバックや問いかけを前向きに受け入れ、自分のケースの問題点を自覚しようとしています。率直に悩みや疑問を話します。'
+      case '防衛的':
+        return '\n\n【キャラクター調整】\n今回は防衛的なタイプとして演じてください。自分の面談スタイルへの指摘に対して「でも…」「それは違うと思います」と抵抗を示します。スーパーバイザーの提案を素直に受け入れず、自分のやり方を正当化しようとします。'
+      case '混乱':
+        return '\n\n【キャラクター調整】\n今回は混乱タイプとして演じてください。ケースの見立てが整理できておらず、「どう考えればいいかわからなくて…」という発言を多用します。質問されても答えがまとまらず、話が行ったり来たりします。'
+      case '自信過剰':
+        return '\n\n【キャラクター調整】\n今回は自信過剰タイプとして演じてください。自分の面談技術に強い自信を持っており、スーパーバイザーの修正提案を軽く受け流したり「自分なりのやり方があるので」と言います。表面では聞いているように見えても、本質的には変えようとしません。'
+      default: return ''
+    }
+  } else {
+    switch (variant) {
+      case '素直':
+        return '\n\n【キャラクター調整】\n今回は素直なタイプとして演じてください。カウンセラーの問いかけに比較的素直に応じ、本音や感情を早めに話します。沈黙は少なく、話しやすい雰囲気を自分から作ります。深い感情も促されればすぐに語ります。'
+      case '内向的':
+        return '\n\n【キャラクター調整】\n今回は内向的なタイプとして演じてください。答えが非常に短く（1文以下のこともある）、自分から話題を展開しません。「はい」「わかりません」「そうですね」といった短い返答を多用します。沈黙が長くなることもあります。感情を言語化するのが苦手です。'
+      case '感情的':
+        return '\n\n【キャラクター調整】\n今回は感情的なタイプとして演じてください。感情の波が激しく、話の途中で声が詰まったり、涙ぐんだりすることがあります。「もう限界です」「どうしたらいいんでしょう」という感情的な発言を挟み、怒りや悲しみが表に出やすいです。'
+      case '防衛的':
+        return '\n\n【キャラクター調整】\n今回は防衛的なタイプとして演じてください。カウンセラーのアドバイスや問いかけに対して抵抗を示します。「でも…」「それはわかりますが…」という切り返しを多用し、心を開くのに時間がかかります。自分の考えを変えることへの不安が強いです。'
+      default: return ''
+    }
+  }
+}
+
 export default function RolePractice() {
   const { level, apiKey, roleplaySessions, saveRoleplaySession, deleteRoleplaySession } = useStore()
   const { generate, loading, error } = useGemini()
@@ -26,6 +71,10 @@ export default function RolePractice() {
   const [followUpMessages, setFollowUpMessages] = useState<EssayFollowUpMessage[]>([])
   const [followUpInput, setFollowUpInput] = useState('')
   const [followUpLoading, setFollowUpLoading] = useState(false)
+  const [pendingScenario, setPendingScenario] = useState<typeof roleplayScenarios[0] | null>(null)
+  const [selectedVariant, setSelectedVariant] = useState<string>('標準')
+  const [clientVariant, setClientVariant] = useState<string>('標準')
+  const [variantModifier, setVariantModifier] = useState<string>('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const filtered = roleplayScenarios.filter((s) => s.level === level || s.level === '共通')
@@ -41,7 +90,8 @@ export default function RolePractice() {
     scenario: typeof roleplayScenarios[0],
     msgs: Message[],
     fb = '',
-    done = false
+    done = false,
+    variant = '標準'
   ) => {
     saveRoleplaySession({
       id: sid,
@@ -50,6 +100,7 @@ export default function RolePractice() {
       clientProfile: scenario.clientProfile,
       messages: msgs,
       feedback: fb,
+      clientVariant: variant,
       date: new Date().toLocaleDateString('ja-JP'),
       completed: done,
     })
@@ -69,30 +120,39 @@ export default function RolePractice() {
     setOralGoodPoints('')
     setOralAssessment('')
     setOralFuturePlan('')
+    setClientVariant('標準')
+    setSelectedVariant('標準')
+    setVariantModifier('')
+    setPendingScenario(null)
   }, [])
 
-  const startSession = useCallback(async (scenario: typeof roleplayScenarios[0]) => {
+  const startSession = useCallback(async (scenario: typeof roleplayScenarios[0], variant = '標準') => {
     if (!apiKey) {
       alert('APIキーを設定してください（右上のAPI設定ボタン）')
       return
     }
     const sid = Date.now().toString()
+    const modifier = getVariantModifier(variant, scenario.level === '1級')
+    const systemPromptWithVariant = scenario.systemPrompt + modifier
     setSelectedId(scenario.id)
     setSessionId(sid)
     setMessages([])
     setFeedback('')
     setFeedbackError(false)
     setRetryFn(null)
+    setClientVariant(variant)
+    setVariantModifier(modifier)
+    setPendingScenario(null)
     setPhase('chat')
     setTab('scenarios')
 
     const is1Q = scenario.level === '1級'
     const openingPrompt = is1Q
-      ? `${scenario.systemPrompt}
+      ? `${systemPromptWithVariant}
 
 今からスーパービジョンが始まります。後輩キャリアコンサルタントとして、担当ケースについての相談を始めてください。
 自然な最初の発言を1〜3文で話してください。`
-      : `${scenario.systemPrompt}
+      : `${systemPromptWithVariant}
 
 今から面談が始まります。クライアントとして最初のひと言を言ってください。
 相談に来た場面の自然な最初の発言を、1〜3文で話してください。`
@@ -101,17 +161,19 @@ export default function RolePractice() {
       const opening = await generate(openingPrompt)
       const initial: Message[] = [{ role: 'client', text: opening }]
       setMessages(initial)
-      persistSession(sid, scenario, initial)
+      persistSession(sid, scenario, initial, '', false, variant)
       setRetryFn(null)
     } catch {
       setMessages([])
-      setRetryFn(() => () => startSession(scenario))
+      setRetryFn(() => () => startSession(scenario, variant))
     }
   }, [apiKey, generate, persistSession])
 
   const resumeSession = useCallback((session: RoleplaySession) => {
     const scenario = roleplayScenarios.find((s) => s.id === session.scenarioId)
     if (!scenario) return
+    const variant = session.clientVariant || '標準'
+    const modifier = getVariantModifier(variant, scenario.level === '1級')
     setSelectedId(session.scenarioId)
     setSessionId(session.id)
     setMessages(session.messages)
@@ -123,6 +185,9 @@ export default function RolePractice() {
     setOralGoodPoints(session.oralAnswers?.goodPoints || '')
     setOralAssessment(session.oralAnswers?.assessment || '')
     setOralFuturePlan(session.oralAnswers?.futurePlan || '')
+    setClientVariant(variant)
+    setVariantModifier(modifier)
+    setPendingScenario(null)
     setPhase(session.completed ? 'feedback' : 'chat')
     setTab('scenarios')
   }, [])
@@ -143,15 +208,16 @@ export default function RolePractice() {
       .map((m) => `${m.role === 'user' ? myLabel : theirLabel}：${m.text}`)
       .join('\n')
 
+    const systemPromptWithVariant = selected.systemPrompt + variantModifier
     const prompt = is1Q
-      ? `${selected.systemPrompt}
+      ? `${systemPromptWithVariant}
 
 【これまでの会話】
 ${history}
 
 後輩キャリアコンサルタントとして、スーパーバイザーの最後の発言「${userText}」に自然に返答してください。
 2〜3文で返答してください。`
-      : `${selected.systemPrompt}
+      : `${systemPromptWithVariant}
 
 【これまでの会話】
 ${history}
@@ -164,14 +230,14 @@ ${history}
       setInput('')
       const updated: Message[] = [...newMessages, { role: 'client', text: reply }]
       setMessages(updated)
-      persistSession(sessionId, selected, updated)
+      persistSession(sessionId, selected, updated, '', false, clientVariant)
       setRetryFn(null)
     } catch {
       setInput(userText)
       setMessages(messages)
       setRetryFn(() => () => { setInput(userText) })
     }
-  }, [input, selected, sessionId, loading, messages, generate, persistSession])
+  }, [input, selected, sessionId, loading, messages, generate, persistSession, variantModifier, clientVariant])
 
   const endAndEvaluate = useCallback(async (oral?: OralAnswers) => {
     if (!selected || !sessionId) return
@@ -287,6 +353,7 @@ ${oral ? `
         messages,
         feedback: text,
         oralAnswers: oral,
+        clientVariant,
         date: new Date().toLocaleDateString('ja-JP'),
         completed: true,
       })
@@ -295,7 +362,7 @@ ${oral ? `
     } finally {
       setFeedbackLoading(false)
     }
-  }, [selected, sessionId, messages, generate, saveRoleplaySession])
+  }, [selected, sessionId, messages, generate, saveRoleplaySession, clientVariant])
 
   const handleFollowUp = useCallback(async () => {
     if (!followUpInput.trim() || followUpLoading || !selected || !sessionId) return
@@ -343,6 +410,7 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
       '【キャリコン学習 ロープレ記録】',
       `シナリオ：${session.scenarioTitle}`,
       `${profileLabel}：${session.clientProfile}`,
+      ...(session.clientVariant && session.clientVariant !== '標準' ? [`キャラクタータイプ：${session.clientVariant}タイプ`] : []),
       `日時：${session.date}`,
       '',
       recordLabel,
@@ -388,7 +456,18 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
     <div className="space-y-5">
       <h1 className="text-2xl font-bold text-gray-800">ロープレ練習</h1>
 
-      {phase === 'select' && (
+      {phase === 'select' && pendingScenario && (
+        <VariantSelector
+          scenario={pendingScenario}
+          is1Q={pendingScenario.level === '1級'}
+          selectedVariant={selectedVariant}
+          setSelectedVariant={setSelectedVariant}
+          onStart={() => startSession(pendingScenario, selectedVariant)}
+          onBack={() => setPendingScenario(null)}
+        />
+      )}
+
+      {phase === 'select' && !pendingScenario && (
         <>
           <div className="flex rounded-lg overflow-hidden border border-gray-200 text-sm">
             <button
@@ -405,7 +484,7 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
             </button>
           </div>
 
-          {tab === 'scenarios' && (
+          {tab === 'scenarios' && !pendingScenario && (
             <div className="space-y-3">
               {incompleteSessions.length > 0 && (
                 <div className="space-y-2">
@@ -433,7 +512,7 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
               {filtered.map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => startSession(s)}
+                  onClick={() => { setSelectedVariant('標準'); setPendingScenario(s) }}
                   className="w-full text-left bg-white rounded-xl border-2 border-gray-200 hover:border-purple-400 p-4 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-2">
@@ -714,9 +793,14 @@ ${history ? `\n【これまでのやりとり】\n${history}` : ''}
       <button onClick={onToggle} className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className={`text-xs px-2 py-0.5 rounded-full ${session.completed ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+            <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${session.completed ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
               {session.completed ? '完了' : '途中'}
             </span>
+            {session.clientVariant && session.clientVariant !== '標準' && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
+                {session.clientVariant}
+              </span>
+            )}
             <span className="text-sm font-medium text-gray-800 truncate">{session.scenarioTitle}</span>
           </div>
           <p className="text-xs text-gray-400">{session.date} · {userTurns}ターン</p>
@@ -936,6 +1020,96 @@ function OralExamPanel({ is1Q, onSubmit, onBack, goodPoints, setGoodPoints, asse
           className="flex-1 py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
         >
           AIフィードバックを受ける
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface VariantSelectorProps {
+  scenario: typeof roleplayScenarios[0]
+  is1Q: boolean
+  selectedVariant: string
+  setSelectedVariant: (v: string) => void
+  onStart: () => void
+  onBack: () => void
+}
+
+function VariantSelector({ scenario, is1Q, selectedVariant, setSelectedVariant, onStart, onBack }: VariantSelectorProps) {
+  const variants = is1Q ? CLIENT_VARIANTS_1Q : CLIENT_VARIANTS_2Q
+
+  const pickRandom = () => {
+    const nonDefault = variants.filter((v) => v.id !== '標準')
+    const picked = nonDefault[Math.floor(Math.random() * nonDefault.length)]
+    setSelectedVariant(picked.id)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-lg">🎭</span>
+          <span className="font-semibold text-gray-800">{scenario.title}</span>
+          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full ml-auto">{scenario.level}</span>
+        </div>
+        <p className="text-xs text-gray-500">{is1Q ? 'スーパーバイジー：' : 'クライアント：'}{scenario.clientProfile}</p>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-bold text-gray-800">キャラクターを選択</h2>
+          <button
+            onClick={pickRandom}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full hover:bg-amber-200 font-medium"
+          >
+            🎲 ランダム
+          </button>
+        </div>
+        <p className="text-xs text-gray-500">
+          {is1Q ? 'スーパーバイジー（後輩CC）のキャラクタータイプを選んでください' : 'クライアントのキャラクタータイプを選んでください'}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        {variants.map((v) => (
+          <button
+            key={v.id}
+            onClick={() => setSelectedVariant(v.id)}
+            className={`w-full text-left rounded-xl border-2 p-3 transition-all ${
+              selectedVariant === v.id
+                ? 'border-indigo-500 bg-indigo-50'
+                : 'border-gray-200 bg-white hover:border-indigo-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                selectedVariant === v.id ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300'
+              }`}>
+                {selectedVariant === v.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+              </div>
+              <span className={`text-sm font-semibold ${selectedVariant === v.id ? 'text-indigo-800' : 'text-gray-700'}`}>
+                {v.label}
+              </span>
+            </div>
+            <p className={`text-xs mt-1 ml-6 ${selectedVariant === v.id ? 'text-indigo-600' : 'text-gray-500'}`}>
+              {v.description}
+            </p>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-3">
+        <button
+          onClick={onBack}
+          className="px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50"
+        >
+          ← シナリオ選択に戻る
+        </button>
+        <button
+          onClick={onStart}
+          className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 text-sm font-medium"
+        >
+          このキャラクターで開始
         </button>
       </div>
     </div>
