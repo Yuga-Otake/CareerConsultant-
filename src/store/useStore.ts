@@ -60,6 +60,7 @@ export interface RoleplaySession {
   feedback: string
   followUp?: EssayFollowUpMessage[]
   oralAnswers?: OralAnswers
+  clientVariant?: string
   date: string
   completed: boolean
 }
